@@ -349,21 +349,31 @@ class FirestoreAuctionRealtimeBridge {
     );
     this.activeUnsubscribers.push(unsubTeams);
 
-    // 5. Zero-Lag Fast-Heartbeat Poller (guarantees update within 1.2s across dropped packets or mobile sleep)
+    // 5. Zero-Lag Fast-Heartbeat Poller (guarantees fast real-time update within 600ms)
     const poller = setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
         if (!res.ok) return;
         const all = await res.json();
         const active = all.find((p) => p.status === 'LIVE');
-        if (active && active.id !== this.currentActivePlayerId) {
-          this.currentActivePlayerId = active.id;
-          this.emitLocal('livePlayerUpdated', active);
-        } else if (!active && this.currentActivePlayerId) {
+        if (active) {
+          const prev = this.previousPlayerStates.get(active.id);
+          if (
+            active.id !== this.currentActivePlayerId ||
+            !prev ||
+            prev.currentBid !== active.currentBid ||
+            prev.currentBidTeamId !== active.currentBidTeamId
+          ) {
+            this.currentActivePlayerId = active.id;
+            this.previousPlayerStates.set(active.id, active);
+            this.emitLocal('livePlayerUpdated', active);
+          }
+        } else if (this.currentActivePlayerId) {
           this.currentActivePlayerId = null;
+          this.emitLocal('livePlayerUpdated', null);
         }
       } catch (e) {}
-    }, 1200);
+    }, 600);
     this.activeUnsubscribers.push(() => clearInterval(poller));
 
     // 6. SSE Real-time Stream Bridge (Guarantees immediate zero-config synchronization)
@@ -383,6 +393,7 @@ class FirestoreAuctionRealtimeBridge {
           'penaltyIssued',
           'auctionStarting',
           'timerUpdated',
+          'auctionReset',
         ];
 
         eventNames.forEach((evName) => {

@@ -140,11 +140,12 @@ export default function ViewerDashboard() {
       .catch(console.error);
 
     socket.on('livePlayerUpdated', (player) => {
-      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
+      const locId = player?.locationId || selectedLocationId || 'main_arena';
+      setLivePlayers(prev => ({ ...prev, [locId]: player || null }));
       if (player?.timerDeadlineMs) {
         setTimers(prev => ({
           ...prev,
-          [player.locationId]: {
+          [locId]: {
             deadlineMs: player.timerDeadlineMs,
             remainingSec: Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)),
             paused: false
@@ -237,6 +238,36 @@ export default function ViewerDashboard() {
       setAuctionStartingCountdown(remaining);
     });
 
+    socket.on('auctionReset', (data) => {
+      const locId = data?.locationId || 'main_arena';
+      setLivePlayers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setCurrentBids(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setTimers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setVenueStats(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setBreakModes(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setSelectedLocationId(null); // Switch directly to Global Arena Multiview
+    });
+
     return () => {
       socket.off('livePlayerUpdated');
       socket.off('newBid');
@@ -244,6 +275,7 @@ export default function ViewerDashboard() {
       socket.off('playerUnsold');
       socket.off('auctionBreakToggled');
       socket.off('auctionStarting');
+      socket.off('auctionReset');
     };
   }, []);
 

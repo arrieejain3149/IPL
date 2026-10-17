@@ -99,36 +99,38 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         setTeams(data);
         let myTeam = null;
 
-        // 1. Check query parameter (e.g. ?team=csk) or route parameter (/team/:teamId)
-        const teamQuery = (teamParam || routeTeamId || forcedTeamId || '').toLowerCase().trim();
-        if (teamQuery) {
-          myTeam = data.find(t => {
-            const short = (t.shortName || t.franchiseCode || '').toLowerCase();
-            const name = (t.name || '').toLowerCase();
-            const id = (t.id || '').toLowerCase();
-            return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
-          });
+        // If user is a team leader (not ADMIN), strictly enforce their authenticated franchise
+        if (user && user.role !== 'ADMIN') {
+          if (user.teamId) {
+            myTeam = data.find(t => String(t.id) === String(user.teamId));
+          }
+          if (!myTeam && user.username) {
+            const raw = user.username.toLowerCase();
+            const clean = raw.replace(/^owner_/, '');
+            myTeam = data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              const id = (t.id || '').toLowerCase();
+              return short === clean || name.includes(clean) || id.includes(clean) || id.includes(raw);
+            });
+          }
         }
 
-        // 2. Match by user.teamId
-        if (!myTeam && user?.teamId) {
-          myTeam = data.find(t => String(t.id) === String(user.teamId));
+        // For ADMIN or fallback: match by query / route param
+        if (!myTeam) {
+          const teamQuery = (teamParam || routeTeamId || forcedTeamId || '').toLowerCase().trim();
+          if (teamQuery) {
+            myTeam = data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              const id = (t.id || '').toLowerCase();
+              return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
+            });
+          }
         }
 
-        // 3. Match by user.username (supports csk, owner_csk, mi, owner_mi, rr, owner_rr, etc.)
-        if (!myTeam && user?.username) {
-          const raw = user.username.toLowerCase();
-          const clean = raw.replace(/^owner_/, '');
-          myTeam = data.find(t => {
-            const short = (t.shortName || t.franchiseCode || '').toLowerCase();
-            const name = (t.name || '').toLowerCase();
-            const id = (t.id || '').toLowerCase();
-            return short === clean || name.includes(clean) || id.includes(clean) || id.includes(raw);
-          });
-        }
-
-        // 4. Default to first team if available
-        if (!myTeam && data.length > 0) {
+        // Default to first team if still not resolved and ADMIN
+        if (!myTeam && user?.role === 'ADMIN' && data.length > 0) {
           myTeam = data[0];
         }
 

@@ -137,6 +137,18 @@ async function seed() {
     samplePlayers = JSON.parse(fs.readFileSync(all211Path, 'utf8'));
   }
 
+  const getPoolNumber = (poolStr) => {
+    if (!poolStr) return 999;
+    const match = String(poolStr).match(/POOL\s*[-]?\s*(\d+)/i);
+    return match ? parseInt(match[1], 10) : 999;
+  };
+  samplePlayers.sort((a, b) => {
+    const poolA = getPoolNumber(a.pool);
+    const poolB = getPoolNumber(b.pool);
+    if (poolA !== poolB) return poolA - poolB;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
   const batch = db.batch();
   for (let i = 0; i < samplePlayers.length; i++) {
     const p = samplePlayers[i];

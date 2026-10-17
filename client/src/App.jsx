@@ -14,15 +14,9 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   const location = useLocation();
 
   if (!user) {
-    if (requiredRole === 'TEAM_LEADER') {
-      return children;
-    }
     return <Navigate to={`/login${location.search}`} />;
   }
-  if (requiredRole && user.role !== requiredRole) {
-    if (requiredRole === 'TEAM_LEADER') {
-      return children;
-    }
+  if (requiredRole && user.role !== requiredRole && user.role !== 'ADMIN') {
     return <Navigate to="/" />;
   }
   return children;
@@ -100,8 +94,12 @@ function App() {
             <Route path="/team-leader" element={
               <ProtectedRoute requiredRole="TEAM_LEADER"><TeamLeaderDashboard /></ProtectedRoute>
             } />
-            <Route path="/team" element={<ThemedTeamDashboard forcedTeamId="dc" />} />
-            <Route path="/team/:teamId" element={<ThemedTeamDashboard />} />
+            <Route path="/team" element={
+              <ProtectedRoute requiredRole="TEAM_LEADER"><ThemedTeamDashboard forcedTeamId="dc" /></ProtectedRoute>
+            } />
+            <Route path="/team/:teamId" element={
+              <ProtectedRoute requiredRole="TEAM_LEADER"><ThemedTeamDashboard /></ProtectedRoute>
+            } />
             <Route path="/viewer" element={<ViewerDashboard />} />
           </Routes>
         </main>

@@ -30,13 +30,14 @@ export default function Login({ portalName }) {
       }
 
       // If teamParam is present (e.g. ?team=csk) and doesn't match current user, stay on login form for that team
-      if (teamParam && user.username?.toLowerCase() !== teamParam.toLowerCase()) {
+      const currentTeam = user.username?.toLowerCase().replace(/^owner_/, '');
+      if (teamParam && currentTeam !== teamParam.toLowerCase() && user.role !== 'ADMIN') {
         return;
       }
 
-      if (user.role === 'ADMIN') navigate('/manager');
+      if (user.role === 'ADMIN') navigate(teamParam ? `/team-leader?team=${teamParam}` : '/manager');
       else if (user.role === 'AUCTIONEER') navigate('/auctioneer');
-      else if (user.role === 'TEAM_LEADER') navigate(`/team-leader?team=${teamParam || user.username || ''}`);
+      else if (user.role === 'TEAM_LEADER') navigate(`/team-leader?team=${teamParam || currentTeam || ''}`);
       else navigate('/');
     }
   }, [user, teamParam, portalName, navigate]);
@@ -48,9 +49,10 @@ export default function Login({ portalName }) {
     
     try {
       const loggedUser = await login(username, password);
-      if (loggedUser.role === 'ADMIN') navigate('/manager');
+      const loggedTeam = loggedUser.username?.toLowerCase().replace(/^owner_/, '');
+      if (loggedUser.role === 'ADMIN') navigate(teamParam ? `/team-leader?team=${teamParam}` : '/manager');
       else if (loggedUser.role === 'AUCTIONEER') navigate('/auctioneer');
-      else if (loggedUser.role === 'TEAM_LEADER') navigate(`/team-leader?team=${teamParam || loggedUser.username || ''}`);
+      else if (loggedUser.role === 'TEAM_LEADER') navigate(`/team-leader?team=${teamParam || loggedTeam || ''}`);
       else navigate('/');
     } catch (err) {
       setError(err.message || 'Authentication failed. Check credentials.');
