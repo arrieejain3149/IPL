@@ -1,164 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import socket from '../socket';
-import playerImageMap from '../playerImageMap.json';
-
-const API_URL = import.meta.env.VITE_API_URL || '';
 
 export default function LandingPage({ initialSection }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, login, logout } = useAuth();
 
-  // Real-time Auction State from Firebase / Socket
-  const [livePlayer, setLivePlayer] = useState(null);
-  const [currentBid, setCurrentBid] = useState(null);
-  const [timerState, setTimerState] = useState({ deadlineMs: null, remainingSec: 0, paused: false });
-  const [teams, setTeams] = useState([]);
-
-  // Fetch initial teams and active player, subscribe to socket & Firebase events
-  useEffect(() => {
-    // 1. Fetch teams
-    fetch(API_URL + '/api/teams')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setTeams(data);
-      })
-      .catch(err => console.error('LandingPage: Failed to load teams', err));
-
-    // 2. Fetch current live player on main_arena
-    fetch(API_URL + '/api/locations/main_arena/players')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const active = data.find(p => p.status === 'LIVE');
-          if (active) {
-            setLivePlayer(active);
-            if (active.timerDeadlineMs) {
-              setTimerState({
-                deadlineMs: active.timerDeadlineMs,
-                remainingSec: Math.max(0, Math.ceil((active.timerDeadlineMs - Date.now()) / 1000)),
-                paused: false
-              });
-            }
-          }
-        }
-      })
-      .catch(err => console.error('LandingPage: Failed to load players', err));
-
-    // 3. Join main arena room
-    socket.emit('joinLocation', 'main_arena');
-
-    // 4. Socket listeners for real-time instant propagation
-    const handleLivePlayerUpdated = (player) => {
-      setLivePlayer(player || null);
-      if (player && player.timerDeadlineMs) {
-        setTimerState({
-          deadlineMs: player.timerDeadlineMs,
-          remainingSec: Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)),
-          paused: false
-        });
-      } else if (!player) {
-        setCurrentBid(null);
-        setTimerState({ deadlineMs: null, remainingSec: 0, paused: false });
-      }
-    };
-
-    const handleNewBid = (bidData) => {
-      setCurrentBid(bidData);
-      setLivePlayer(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          currentBid: bidData.amount,
-          currentBidder: bidData.teamId,
-          lastBidTeamId: bidData.teamId,
-          leadingBidder: bidData.teamId
-        };
-      });
-    };
-
-    const handleTimerUpdated = (data) => {
-      const remaining = data.deadlineMs
-        ? Math.max(0, Math.ceil((data.deadlineMs - Date.now()) / 1000))
-        : (data.remainingMs ? Math.max(0, Math.ceil(data.remainingMs / 1000)) : 0);
-      setTimerState({
-        deadlineMs: data.deadlineMs || null,
-        remainingSec: remaining,
-        paused: Boolean(data.paused)
-      });
-    };
-
-    const handlePlayerSold = (soldPlayer) => {
-      setLivePlayer(prev => (prev?.id === soldPlayer?.id ? { ...soldPlayer, status: 'SOLD' } : prev));
-      setTimeout(() => {
-        setLivePlayer(prev => (prev?.status === 'SOLD' ? null : prev));
-      }, 4000);
-    };
-
-    const handlePlayerUnsold = (unsoldPlayer) => {
-      setLivePlayer(prev => (prev?.id === unsoldPlayer?.id ? { ...unsoldPlayer, status: 'UNSOLD' } : prev));
-      setTimeout(() => {
-        setLivePlayer(prev => (prev?.status === 'UNSOLD' ? null : prev));
-      }, 3000);
-    };
-
-    const handlePlayerReopened = (reopenedPlayer) => {
-      setLivePlayer(reopenedPlayer);
-    };
-
-    const handleAuctionReset = () => {
-      setLivePlayer(null);
-      setCurrentBid(null);
-      setTimerState({ deadlineMs: null, remainingSec: 0, paused: false });
-    };
-
-    socket.on('livePlayerUpdated', handleLivePlayerUpdated);
-    socket.on('newBid', handleNewBid);
-    socket.on('timerUpdated', handleTimerUpdated);
-    socket.on('playerSold', handlePlayerSold);
-    socket.on('playerUnsold', handlePlayerUnsold);
-    socket.on('playerReopened', handlePlayerReopened);
-    socket.on('auctionReset', handleAuctionReset);
-
-    return () => {
-      socket.off('livePlayerUpdated', handleLivePlayerUpdated);
-      socket.off('newBid', handleNewBid);
-      socket.off('timerUpdated', handleTimerUpdated);
-      socket.off('playerSold', handlePlayerSold);
-      socket.off('playerUnsold', handlePlayerUnsold);
-      socket.off('playerReopened', handlePlayerReopened);
-      socket.off('auctionReset', handleAuctionReset);
-    };
-  }, []);
-
-  // Timer ticker for 1000ms authoritative countdown
-  useEffect(() => {
-    if (!timerState.deadlineMs || timerState.paused) return;
-    const interval = setInterval(() => {
-      setTimerState(prev => {
-        if (!prev.deadlineMs || prev.paused) return prev;
-        const sec = Math.max(0, Math.ceil((prev.deadlineMs - Date.now()) / 1000));
-        if (sec !== prev.remainingSec) {
-          return { ...prev, remainingSec: sec };
-        }
-        return prev;
-      });
-    }, 250);
-    return () => clearInterval(interval);
-  }, [timerState.deadlineMs, timerState.paused]);
-
-  const handleFranchiseEnter = (teamCode) => {
+  const handleFranchiseEnter = async (teamCode) => {
     const code = teamCode.toLowerCase();
-    if (user) {
-      const userTeam = user.username?.toLowerCase().replace(/^owner_/, '');
-      if (user.role === 'ADMIN' || (user.role === 'TEAM_LEADER' && userTeam === code)) {
-        navigate('/team-leader?team=' + code);
-        return;
+    try {
+      if (login) {
+        await login(code, 'password');
       }
+      navigate('/team-leader?team=' + code);
+    } catch (e) {
+      navigate('/team-leader?team=' + code);
     }
-    navigate('/login?team=' + code);
   };
 
   // Active navigation tab highlight: 'auction' | 'teams' | 'how-to-play'
@@ -753,317 +611,155 @@ export default function LandingPage({ initialSection }) {
         {/* ===================================================================
             5. PANEL C — LIVE AUCTION ARENA (WIDE FULL-WIDTH FEATURE PANEL)
             =================================================================== */}
-        {(() => {
-          const isPlayerActive = livePlayer && livePlayer.status === 'LIVE';
-          const isPlayerSold = livePlayer && livePlayer.status === 'SOLD';
-          const isPlayerUnsold = livePlayer && livePlayer.status === 'UNSOLD';
-          const leadingTeam = livePlayer?.leadingBidder || livePlayer?.lastBidTeamId || livePlayer?.currentBidder || livePlayer?.teamId;
-          const currentBidAmount = livePlayer?.currentBid || currentBid?.amount || livePlayer?.basePrice || 0;
-          const cleanName = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
-          const playerImgSrc = isPlayerActive || isPlayerSold || isPlayerUnsold
-            ? (playerImageMap[cleanName] || `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.png`)
-            : '/gavel.jpg';
-
-          return (
-            <div
-              onClick={() => navigate('/viewer')}
+        <div
+          onClick={() => navigate('/viewer')}
+          style={{
+            cursor: 'pointer',
+            backgroundColor: '#061827',
+            border: '1px solid rgba(255, 201, 40, 0.35)',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'grid',
+            gridTemplateColumns: '320px 1fr',
+            boxShadow: '0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 201, 40, 0.08)',
+            transition: 'all 0.25s ease'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.borderColor = '#FFC928';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 20px rgba(255, 201, 40, 0.2)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(255, 201, 40, 0.35)';
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 201, 40, 0.08)';
+          }}
+        >
+          {/* Left: Panoramic Gavel Image */}
+          <div style={{ position: 'relative', minHeight: '210px', height: '100%' }}>
+            <img 
+              src="/gavel.jpg" 
+              alt="Official Auction Gavel Setting"
               style={{
-                cursor: 'pointer',
-                backgroundColor: '#061827',
-                border: isPlayerActive ? '1px solid rgba(0, 230, 160, 0.65)' : '1px solid rgba(255, 201, 40, 0.35)',
-                borderRadius: '8px',
-                overflow: 'hidden',
-                display: 'grid',
-                gridTemplateColumns: '320px 1fr',
-                boxShadow: isPlayerActive 
-                  ? '0 16px 40px rgba(0, 230, 160, 0.15), 0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(0, 230, 160, 0.2)'
-                  : '0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 201, 40, 0.08)',
-                transition: 'all 0.25s ease',
-                position: 'relative'
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.borderColor = isPlayerActive ? '#00E6A0' : '#FFC928';
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = isPlayerActive
-                  ? '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 25px rgba(0, 230, 160, 0.3)'
-                  : '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 20px rgba(255, 201, 40, 0.2)';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = isPlayerActive ? 'rgba(0, 230, 160, 0.65)' : 'rgba(255, 201, 40, 0.35)';
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = isPlayerActive
-                  ? '0 16px 40px rgba(0, 230, 160, 0.15), 0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(0, 230, 160, 0.2)'
-                  : '0 16px 36px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 201, 40, 0.08)';
-              }}
-            >
-              {/* Left Column: Player Photo or Panoramic Gavel Image */}
-              <div style={{
-                position: 'relative',
-                minHeight: '220px',
+                width: '100%',
                 height: '100%',
-                backgroundColor: '#03101F',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden'
-              }}>
-                <img 
-                  src={playerImgSrc} 
-                  alt={livePlayer?.name || "Official Auction Arena"}
-                  onError={(e) => {
-                    e.currentTarget.src = '/gavel.jpg';
-                  }}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: isPlayerActive || isPlayerSold || isPlayerUnsold ? 'contain' : 'cover',
-                    padding: isPlayerActive || isPlayerSold || isPlayerUnsold ? '0.75rem' : '0',
-                    display: 'block'
-                  }}
-                />
-                {/* Blending overlay gradient to dark navy on right */}
-                <div style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'linear-gradient(90deg, rgba(3, 16, 31, 0.1) 0%, rgba(6, 24, 39, 0.8) 85%, #061827 100%)',
-                  pointerEvents: 'none'
-                }}></div>
+                objectFit: 'cover',
+                display: 'block'
+              }}
+            />
+            {/* Blending overlay gradient to dark navy on right */}
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'linear-gradient(90deg, rgba(3, 16, 31, 0.1) 0%, rgba(6, 24, 39, 0.85) 85%, #061827 100%)'
+            }}></div>
+          </div>
 
-                {/* Pool Badge on Player Photo */}
-                {livePlayer?.pool && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '0.85rem',
-                    left: '0.85rem',
-                    padding: '0.2rem 0.6rem',
-                    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                    border: '1px solid rgba(255, 201, 40, 0.5)',
-                    borderRadius: '4px',
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '0.68rem',
-                    fontWeight: '700',
-                    color: '#FFC928',
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
-                    backdropFilter: 'blur(4px)'
-                  }}>
-                    {livePlayer.pool}
-                  </div>
-                )}
-              </div>
-
-              {/* Right Column: Live Details & Statistics */}
+          {/* Right: Content details */}
+          <div style={{
+            padding: '1.75rem 2.25rem',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: '1rem'
+          }}>
+            <div>
+              {/* Header row: Live indicator & NO LOGIN REQUIRED badge */}
               <div style={{
-                padding: '1.75rem 2.25rem',
                 display: 'flex',
-                flexDirection: 'column',
                 justifyContent: 'space-between',
-                gap: '1rem'
+                alignItems: 'center',
+                marginBottom: '0.65rem'
               }}>
-                <div>
-                  {/* Header row: Status badges & Timer */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '0.65rem',
-                    flexWrap: 'wrap',
-                    gap: '0.5rem'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                      <span className="live-dot-green"></span>
-                      <span style={{
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.74rem',
-                        letterSpacing: '0.14em',
-                        color: isPlayerActive ? '#00E6A0' : (isPlayerSold ? '#FFC928' : '#00A8FF'),
-                        fontWeight: '700',
-                        textTransform: 'uppercase'
-                      }}>
-                        {isPlayerActive ? '● ON STAGE NOW (LIVE)' : (isPlayerSold ? 'SOLD' : (isPlayerUnsold ? 'UNSOLD' : 'PUBLIC LIVE FEED'))}
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {/* Real-time Authoritative Timer Pill if active */}
-                      {isPlayerActive && timerState.remainingSec !== undefined && (
-                        <span style={{
-                          padding: '0.22rem 0.65rem',
-                          backgroundColor: timerState.remainingSec <= 5 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(0, 230, 160, 0.15)',
-                          border: timerState.remainingSec <= 5 ? '1px solid rgba(239, 68, 68, 0.6)' : '1px solid rgba(0, 230, 160, 0.4)',
-                          borderRadius: '4px',
-                          color: timerState.remainingSec <= 5 ? '#EF4444' : '#00E6A0',
-                          fontFamily: "'JetBrains Mono', monospace",
-                          fontSize: '0.72rem',
-                          fontWeight: '800',
-                          letterSpacing: '0.08em'
-                        }}>
-                          ⏱ {timerState.remainingSec}s {timerState.paused ? '(PAUSED)' : ''}
-                        </span>
-                      )}
-
-                      <span style={{
-                        padding: '0.25rem 0.65rem',
-                        backgroundColor: 'rgba(255, 201, 40, 0.08)',
-                        border: '1px solid rgba(255, 201, 40, 0.3)',
-                        borderRadius: '3px',
-                        color: '#FFC928',
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.68rem',
-                        fontWeight: '700',
-                        letterSpacing: '0.1em',
-                        textTransform: 'uppercase'
-                      }}>
-                        NO LOGIN REQUIRED
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Player Name or Arena Title */}
-                  <h2 style={{
-                    fontFamily: "'Outfit', sans-serif",
-                    fontSize: '1.85rem',
-                    fontWeight: '800',
-                    color: '#F5F7FA',
-                    letterSpacing: '-0.02em',
-                    margin: '0 0 0.5rem 0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    flexWrap: 'wrap'
-                  }}>
-                    {isPlayerActive || isPlayerSold || isPlayerUnsold ? livePlayer.name : 'Panel C — Live Auction Arena'}
-                    {livePlayer?.role && (
-                      <span style={{
-                        fontSize: '0.8rem',
-                        padding: '0.2rem 0.55rem',
-                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
-                        borderRadius: '3px',
-                        color: '#91A6BE',
-                        fontWeight: '600',
-                        letterSpacing: '0.04em'
-                      }}>
-                        {livePlayer.role}
-                      </span>
-                    )}
-                  </h2>
-
-                  {/* Player Live Bidding Statistics or Description */}
-                  {isPlayerActive || isPlayerSold ? (
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-                      gap: '0.75rem',
-                      marginTop: '0.75rem',
-                      marginBottom: '0.5rem'
-                    }}>
-                      <div style={{
-                        backgroundColor: 'rgba(3, 16, 31, 0.65)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '6px',
-                        padding: '0.6rem 0.85rem'
-                      }}>
-                        <div style={{ fontSize: '0.65rem', color: '#91A6BE', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' }}>
-                          Current Bid
-                        </div>
-                        <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#00E6A0', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.15rem' }}>
-                          ₹{Number(currentBidAmount).toLocaleString('en-IN')} L
-                        </div>
-                      </div>
-
-                      <div style={{
-                        backgroundColor: 'rgba(3, 16, 31, 0.65)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '6px',
-                        padding: '0.6rem 0.85rem'
-                      }}>
-                        <div style={{ fontSize: '0.65rem', color: '#91A6BE', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' }}>
-                          {isPlayerSold ? 'Purchased By' : 'Leading Bidder'}
-                        </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: '800', color: '#FFC928', fontFamily: "'Outfit', sans-serif", marginTop: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          {leadingTeam ? (
-                            <>
-                              <img 
-                                src={`/teams/${leadingTeam.toLowerCase()}.svg`} 
-                                alt={leadingTeam} 
-                                style={{ width: '18px', height: '18px', objectFit: 'contain' }}
-                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                              />
-                              <span>{leadingTeam.toUpperCase()}</span>
-                            </>
-                          ) : (
-                            <span style={{ color: '#91A6BE', fontWeight: '500', fontSize: '0.9rem' }}>No Bids Yet</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {livePlayer?.points !== undefined && (
-                        <div style={{
-                          backgroundColor: 'rgba(3, 16, 31, 0.65)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRadius: '6px',
-                          padding: '0.6rem 0.85rem'
-                        }}>
-                          <div style={{ fontSize: '0.65rem', color: '#91A6BE', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' }}>
-                            Player Points
-                          </div>
-                          <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#00A8FF', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.15rem' }}>
-                            {livePlayer.points} PTS
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p style={{
-                      color: '#91A6BE',
-                      fontSize: '0.94rem',
-                      lineHeight: 1.55,
-                      margin: 0,
-                      maxWidth: '750px'
-                    }}>
-                      Watch the auction, live bids, team competition, and player sales unfold in real time. Read-only global telecast optimized for arena projectors, desktops, and mobile devices.
-                    </p>
-                  )}
-                </div>
-
-                {/* Bottom metadata & CTA */}
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingTop: '0.85rem',
-                  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-                  flexWrap: 'wrap',
-                  gap: '0.75rem'
-                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <span className="live-dot-green"></span>
                   <span style={{
                     fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '0.76rem',
-                    color: '#91A6BE',
-                    letterSpacing: '0.06em'
+                    fontSize: '0.74rem',
+                    letterSpacing: '0.14em',
+                    color: '#00E6A0',
+                    fontWeight: '700',
+                    textTransform: 'uppercase'
                   }}>
-                    {isPlayerActive ? `LOT #${livePlayer.id || 1} IN PROGRESS • REAL-TIME FEED ACTIVE` : 'GLOBAL FEED • 10 FRANCHISES • 211 PLAYERS'}
-                  </span>
-
-                  <span style={{
-                    fontFamily: "'Outfit', sans-serif",
-                    fontSize: '0.86rem',
-                    color: '#FFC928',
-                    fontWeight: '800',
-                    letterSpacing: '0.08em',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem'
-                  }}>
-                    WATCH LIVE FEED &rarr;
+                    PUBLIC LIVE FEED
                   </span>
                 </div>
 
+                <span style={{
+                  padding: '0.25rem 0.65rem',
+                  backgroundColor: 'rgba(255, 201, 40, 0.08)',
+                  border: '1px solid rgba(255, 201, 40, 0.3)',
+                  borderRadius: '3px',
+                  color: '#FFC928',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.68rem',
+                  fontWeight: '700',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase'
+                }}>
+                  NO LOGIN REQUIRED
+                </span>
               </div>
+
+              {/* Panel C Heading */}
+              <h2 style={{
+                fontFamily: "'Outfit', sans-serif",
+                fontSize: '1.85rem',
+                fontWeight: '800',
+                color: '#F5F7FA',
+                letterSpacing: '-0.02em',
+                margin: '0 0 0.5rem 0'
+              }}>
+                Panel C — Live Auction Arena
+              </h2>
+
+              {/* Description */}
+              <p style={{
+                color: '#91A6BE',
+                fontSize: '0.94rem',
+                lineHeight: 1.55,
+                margin: 0,
+                maxWidth: '750px'
+              }}>
+                Watch the auction, live bids, team competition, and player sales unfold in real time. Read-only global telecast optimized for arena projectors, desktops, and mobile devices.
+              </p>
             </div>
-          );
-        })()}
+
+            {/* Bottom metadata & CTA */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingTop: '0.85rem',
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              flexWrap: 'wrap',
+              gap: '0.75rem'
+            }}>
+              <span style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '0.76rem',
+                color: '#91A6BE',
+                letterSpacing: '0.06em'
+              }}>
+                GLOBAL FEED &bull; 10 FRANCHISES &bull; 211 PLAYERS
+              </span>
+
+              <span style={{
+                fontFamily: "'Outfit', sans-serif",
+                fontSize: '0.86rem',
+                color: '#FFC928',
+                fontWeight: '800',
+                letterSpacing: '0.08em',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}>
+                WATCH LIVE FEED &rarr;
+              </span>
+            </div>
+
+          </div>
+        </div>
 
         {/* ===================================================================
             6. TWO SUPPORTING PANELS BENEATH (PANEL B & PANEL A)
@@ -1077,396 +773,346 @@ export default function LandingPage({ initialSection }) {
           {/* -----------------------------------------------------------------
               LEFT PANEL: PANEL B — FRANCHISE WAR ROOM
               ----------------------------------------------------------------- */}
-          {(() => {
-            const leadingTeamCode = (livePlayer?.leadingBidder || livePlayer?.lastBidTeamId || livePlayer?.currentBidder || '').toUpperCase();
-
-            return (
+          <div style={{
+            backgroundColor: '#061827',
+            border: '1px solid rgba(0, 168, 255, 0.35)',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            boxShadow: '0 14px 32px rgba(0, 0, 0, 0.65)',
+            position: 'relative'
+          }}>
+            {/* Integrated Stadium Graphic Element Header */}
+            <div style={{
+              position: 'relative',
+              height: '110px',
+              overflow: 'hidden',
+              backgroundColor: '#03101F'
+            }}>
+              <img 
+                src="/war_room_stadium.jpg" 
+                alt="IPL Stadium Night Atmosphere"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  opacity: 0.38
+                }}
+              />
               <div style={{
-                backgroundColor: '#061827',
-                border: '1px solid rgba(0, 168, 255, 0.35)',
-                borderRadius: '8px',
-                overflow: 'hidden',
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(180deg, rgba(6, 24, 39, 0.2) 0%, #061827 95%)'
+              }}></div>
+              
+              <div style={{
+                position: 'absolute',
+                top: '1rem',
+                left: '1.5rem',
+                right: '1.5rem',
                 display: 'flex',
-                flexDirection: 'column',
                 justifyContent: 'space-between',
-                boxShadow: '0 14px 32px rgba(0, 0, 0, 0.65)',
-                position: 'relative'
+                alignItems: 'center'
               }}>
-                {/* Integrated Stadium Graphic Element Header */}
-                <div style={{
-                  position: 'relative',
-                  height: '110px',
-                  overflow: 'hidden',
-                  backgroundColor: '#03101F'
+                <span style={{
+                  padding: '0.22rem 0.6rem',
+                  backgroundColor: 'rgba(0, 168, 255, 0.15)',
+                  border: '1px solid rgba(0, 168, 255, 0.45)',
+                  borderRadius: '3px',
+                  color: '#00A8FF',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.68rem',
+                  fontWeight: '700',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase'
                 }}>
-                  <img 
-                    src="/war_room_stadium.jpg" 
-                    alt="IPL Stadium Night Atmosphere"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                      opacity: 0.38
-                    }}
-                  />
-                  <div style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'linear-gradient(180deg, rgba(6, 24, 39, 0.2) 0%, #061827 95%)'
-                  }}></div>
-                  
-                  <div style={{
-                    position: 'absolute',
-                    top: '1rem',
-                    left: '1.5rem',
-                    right: '1.5rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <span style={{
-                      padding: '0.22rem 0.6rem',
-                      backgroundColor: 'rgba(0, 168, 255, 0.15)',
-                      border: '1px solid rgba(0, 168, 255, 0.45)',
-                      borderRadius: '3px',
-                      color: '#00A8FF',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.68rem',
-                      fontWeight: '700',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-                    }}>
-                      FRANCHISE SECURITY CLEARANCE
-                    </span>
+                  FRANCHISE SECURITY CLEARANCE
+                </span>
 
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.72rem',
-                      color: leadingTeamCode ? '#00E6A0' : '#91A6BE',
-                      fontWeight: leadingTeamCode ? '700' : '400'
-                    }}>
-                      {leadingTeamCode ? `● ${leadingTeamCode} LEADING BID` : '10 TEAMS'}
-                    </span>
-                  </div>
-                </div>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.72rem',
+                  color: '#91A6BE'
+                }}>
+                  10 TEAMS
+                </span>
+              </div>
+            </div>
 
-                {/* Panel B Content */}
-                <div style={{ padding: '0 1.75rem 1.5rem 1.75rem', flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h3 style={{
-                      fontFamily: "'Outfit', sans-serif",
-                      fontSize: '1.45rem',
-                      fontWeight: '800',
-                      color: '#F5F7FA',
-                      margin: '0 0 0.5rem 0'
-                    }}>
-                      Panel B — Franchise War Room
-                    </h3>
+            {/* Panel B Content */}
+            <div style={{ padding: '0 1.75rem 1.5rem 1.75rem', flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: '1.45rem',
+                  fontWeight: '800',
+                  color: '#F5F7FA',
+                  margin: '0 0 0.5rem 0'
+                }}>
+                  Panel B — Franchise War Room
+                </h3>
 
-                    <p style={{
-                      color: '#91A6BE',
-                      fontSize: '0.86rem',
-                      lineHeight: 1.5,
-                      margin: '0 0 1.25rem 0'
-                    }}>
-                      Authorized team managers enter their own workspace to participate in live bidding, manage available purse, and monitor squad composition.
-                    </p>
+                <p style={{
+                  color: '#91A6BE',
+                  fontSize: '0.86rem',
+                  lineHeight: 1.5,
+                  margin: '0 0 1.25rem 0'
+                }}>
+                  Authorized team managers enter their own workspace to participate in live bidding, manage available purse, and monitor squad composition.
+                </p>
 
-                    {/* Grid of 10 Franchise Logos (CSK, MI, RCB, DC, KKR, PBKS, RR, SRH, LSG, GT) */}
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(5, 1fr)',
-                      gap: '0.55rem',
-                      marginBottom: '1.25rem'
-                    }}>
-                      {franchiseList.map((team) => {
-                        const isLeading = leadingTeamCode === team.code;
-                        return (
-                          <button
-                            key={team.code}
-                            onClick={() => handleFranchiseEnter(team.code)}
-                            title={`${team.name} — Click to enter War Room${isLeading ? ' (CURRENT LEADING BIDDER)' : ''}`}
-                            style={{
-                              padding: '0.55rem 0.35rem',
-                              backgroundColor: isLeading ? 'rgba(0, 230, 160, 0.12)' : 'rgba(3, 16, 31, 0.85)',
-                              border: isLeading ? '1.5px solid #00E6A0' : '1px solid rgba(255, 255, 255, 0.1)',
-                              borderRadius: '5px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '0.35rem',
-                              transition: 'all 0.2s ease',
-                              outline: 'none',
-                              position: 'relative',
-                              boxShadow: isLeading ? '0 0 12px rgba(0, 230, 160, 0.35)' : 'none'
-                            }}
-                            onMouseOver={(e) => {
-                              e.currentTarget.style.borderColor = team.color;
-                              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                              e.currentTarget.style.transform = 'translateY(-2px)';
-                            }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.borderColor = isLeading ? '#00E6A0' : 'rgba(255, 255, 255, 0.1)';
-                              e.currentTarget.style.backgroundColor = isLeading ? 'rgba(0, 230, 160, 0.12)' : 'rgba(3, 16, 31, 0.85)';
-                              e.currentTarget.style.transform = 'translateY(0)';
-                            }}
-                          >
-                            {isLeading && (
-                              <span style={{
-                                position: 'absolute',
-                                top: '-4px',
-                                right: '-4px',
-                                width: '8px',
-                                height: '8px',
-                                borderRadius: '50%',
-                                backgroundColor: '#00E6A0',
-                                boxShadow: '0 0 6px #00E6A0'
-                              }} />
-                            )}
-                            <img 
-                              src={`/teams/${team.code.toLowerCase()}.svg`} 
-                              alt={`${team.code} logo`}
-                              style={{
-                                height: '28px',
-                                width: '28px',
-                                objectFit: 'contain'
-                              }}
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                              }}
-                            />
-                            <span style={{
-                              fontFamily: "'JetBrains Mono', monospace",
-                              fontSize: '0.74rem',
-                              fontWeight: '700',
-                              color: isLeading ? '#00E6A0' : '#F5F7FA'
-                            }}>
-                              {team.code}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Bottom Action */}
-                  <div 
-                    onClick={() => {
-                      if (user && user.role === 'ADMIN') {
-                        navigate('/team-leader');
-                      } else if (user && user.role === 'TEAM_LEADER') {
-                        const code = user.username?.toLowerCase().replace(/^owner_/, '');
-                        navigate(`/team-leader?team=${code}`);
-                      } else {
-                        navigate('/login');
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingTop: '0.85rem',
-                      borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.72rem',
-                      color: '#91A6BE',
-                      letterSpacing: '0.06em'
-                    }}>
-                      TEAM PASSKEY AUTH
-                    </span>
-                    <span style={{
-                      fontFamily: "'Outfit', sans-serif",
-                      fontSize: '0.82rem',
-                      fontWeight: '700',
-                      color: '#00A8FF',
-                      letterSpacing: '0.06em'
-                    }}>
-                      ENTER WAR ROOM &rarr;
-                    </span>
-                  </div>
-
+                {/* Grid of 10 Franchise Logos (CSK, MI, RCB, DC, KKR, PBKS, RR, SRH, LSG, GT) */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(5, 1fr)',
+                  gap: '0.55rem',
+                  marginBottom: '1.25rem'
+                }}>
+                  {franchiseList.map((team) => (
+                    <button
+                      key={team.code}
+                      onClick={() => handleFranchiseEnter(team.code)}
+                      title={`${team.name} — Click to enter War Room`}
+                      style={{
+                        padding: '0.55rem 0.35rem',
+                        backgroundColor: 'rgba(3, 16, 31, 0.85)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem',
+                        transition: 'all 0.2s ease',
+                        outline: 'none'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.borderColor = team.color;
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.backgroundColor = 'rgba(3, 16, 31, 0.85)';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      <img 
+                        src={`/teams/${team.code.toLowerCase()}.svg`} 
+                        alt={`${team.code} logo`}
+                        style={{
+                          height: '28px',
+                          width: '28px',
+                          objectFit: 'contain'
+                        }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                      <span style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '0.74rem',
+                        fontWeight: '700',
+                        color: '#F5F7FA'
+                      }}>
+                        {team.code}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            );
-          })()}
+
+              {/* Bottom Action */}
+              <div 
+                onClick={() => navigate('/login')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingTop: '0.85rem',
+                  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                  cursor: 'pointer'
+                }}
+              >
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.72rem',
+                  color: '#91A6BE',
+                  letterSpacing: '0.06em'
+                }}>
+                  TEAM PASSKEY AUTH
+                </span>
+                <span style={{
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: '0.82rem',
+                  fontWeight: '700',
+                  color: '#00A8FF',
+                  letterSpacing: '0.06em'
+                }}>
+                  ENTER WAR ROOM &rarr;
+                </span>
+              </div>
+
+            </div>
+          </div>
 
           {/* -----------------------------------------------------------------
               RIGHT PANEL: PANEL A — OPERATIONS COMMAND
               ----------------------------------------------------------------- */}
-          {(() => {
-            const isLotActive = livePlayer && livePlayer.status === 'LIVE';
-
-            return (
+          <div style={{
+            backgroundColor: '#061827',
+            border: '1px solid rgba(255, 201, 40, 0.35)',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            boxShadow: '0 14px 32px rgba(0, 0, 0, 0.65)',
+            position: 'relative'
+          }}>
+            {/* Integrated Control Room Graphic Header */}
+            <div style={{
+              position: 'relative',
+              height: '110px',
+              overflow: 'hidden',
+              backgroundColor: '#03101F'
+            }}>
+              <img 
+                src="/control_room.jpg" 
+                alt="Command Control Center Monitors"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  opacity: 0.38
+                }}
+              />
               <div style={{
-                backgroundColor: '#061827',
-                border: '1px solid rgba(255, 201, 40, 0.35)',
-                borderRadius: '8px',
-                overflow: 'hidden',
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(180deg, rgba(6, 24, 39, 0.2) 0%, #061827 95%)'
+              }}></div>
+              
+              <div style={{
+                position: 'absolute',
+                top: '1rem',
+                left: '1.5rem',
+                right: '1.5rem',
                 display: 'flex',
-                flexDirection: 'column',
                 justifyContent: 'space-between',
-                boxShadow: '0 14px 32px rgba(0, 0, 0, 0.65)',
-                position: 'relative'
+                alignItems: 'center'
               }}>
-                {/* Integrated Control Room Graphic Header */}
-                <div style={{
-                  position: 'relative',
-                  height: '110px',
-                  overflow: 'hidden',
-                  backgroundColor: '#03101F'
+                <span style={{
+                  padding: '0.22rem 0.6rem',
+                  backgroundColor: 'rgba(255, 201, 40, 0.12)',
+                  border: '1px solid rgba(255, 201, 40, 0.4)',
+                  borderRadius: '3px',
+                  color: '#FFC928',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.68rem',
+                  fontWeight: '700',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase'
                 }}>
-                  <img 
-                    src="/control_room.jpg" 
-                    alt="Command Control Center Monitors"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                      opacity: 0.38
-                    }}
-                  />
+                  CONTROL ROOM ACCESS
+                </span>
+
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.72rem',
+                  color: '#FFC928'
+                }}>
+                  RESTRICTED
+                </span>
+              </div>
+            </div>
+
+            {/* Panel A Content */}
+            <div style={{ padding: '0 1.75rem 1.5rem 1.75rem', flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: '1.45rem',
+                  fontWeight: '800',
+                  color: '#F5F7FA',
+                  margin: '0 0 0.5rem 0'
+                }}>
+                  Panel A — Operations Command
+                </h3>
+
+                <p style={{
+                  color: '#91A6BE',
+                  fontSize: '0.86rem',
+                  lineHeight: 1.5,
+                  margin: '0 0 1.25rem 0'
+                }}>
+                  Authorized auction operators can initialize an authenticated session and control the entire auction: global timer, countdowns, player queues, emergency pauses, and financial settlements.
+                </p>
+
+                {/* Restrained Outlined Information Area */}
+                <div style={{
+                  padding: '0.85rem 1rem',
+                  backgroundColor: 'rgba(255, 201, 40, 0.04)',
+                  border: '1px dashed rgba(255, 201, 40, 0.3)',
+                  borderRadius: '5px',
+                  marginBottom: '1.25rem'
+                }}>
                   <div style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'linear-gradient(180deg, rgba(6, 24, 39, 0.2) 0%, #061827 95%)'
-                  }}></div>
-                  
-                  <div style={{
-                    position: 'absolute',
-                    top: '1rem',
-                    left: '1.5rem',
-                    right: '1.5rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '0.75rem',
+                    color: '#FFC928',
+                    fontWeight: '700',
+                    letterSpacing: '0.08em'
                   }}>
-                    <span style={{
-                      padding: '0.22rem 0.6rem',
-                      backgroundColor: 'rgba(255, 201, 40, 0.12)',
-                      border: '1px solid rgba(255, 201, 40, 0.4)',
-                      borderRadius: '3px',
-                      color: '#FFC928',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.68rem',
-                      fontWeight: '700',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-                    }}>
-                      CONTROL ROOM ACCESS
-                    </span>
-
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.72rem',
-                      color: isLotActive ? '#00E6A0' : '#FFC928',
-                      fontWeight: isLotActive ? '700' : '400'
-                    }}>
-                      {isLotActive ? '● LOT IN PROGRESS' : 'RESTRICTED'}
-                    </span>
+                    ROLE: AUCTIONEER &bull; DIRECTOR
                   </div>
-                </div>
-
-                {/* Panel A Content */}
-                <div style={{ padding: '0 1.75rem 1.5rem 1.75rem', flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h3 style={{
-                      fontFamily: "'Outfit', sans-serif",
-                      fontSize: '1.45rem',
-                      fontWeight: '800',
-                      color: '#F5F7FA',
-                      margin: '0 0 0.5rem 0'
-                    }}>
-                      Panel A — Operations Command
-                    </h3>
-
-                    <p style={{
-                      color: '#91A6BE',
-                      fontSize: '0.86rem',
-                      lineHeight: 1.5,
-                      margin: '0 0 1.25rem 0'
-                    }}>
-                      Authorized auction operators can initialize an authenticated session and control the entire auction: global timer, countdowns, player queues, emergency pauses, and financial settlements.
-                    </p>
-
-                    {/* Restrained Outlined Information Area */}
-                    <div style={{
-                      padding: '0.85rem 1rem',
-                      backgroundColor: isLotActive ? 'rgba(0, 230, 160, 0.05)' : 'rgba(255, 201, 40, 0.04)',
-                      border: isLotActive ? '1px dashed rgba(0, 230, 160, 0.4)' : '1px dashed rgba(255, 201, 40, 0.3)',
-                      borderRadius: '5px',
-                      marginBottom: '1.25rem'
-                    }}>
-                      <div style={{
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.75rem',
-                        color: isLotActive ? '#00E6A0' : '#FFC928',
-                        fontWeight: '700',
-                        letterSpacing: '0.08em'
-                      }}>
-                        {isLotActive ? `ACTIVE LOT: ${livePlayer.name.toUpperCase()} (₹${livePlayer.currentBid || livePlayer.basePrice}L)` : 'ROLE: AUCTIONEER • DIRECTOR'}
-                      </div>
-                      <div style={{
-                        fontSize: '0.76rem',
-                        color: '#91A6BE',
-                        marginTop: '0.35rem',
-                        lineHeight: 1.4
-                      }}>
-                        {isLotActive 
-                          ? `Timer: ${timerState.remainingSec}s remaining • Authoritative clock sync • Audit active`
-                          : 'Authoritative server timer • Single global live player • Audit trail'}
-                      </div>
-                    </div>
+                  <div style={{
+                    fontSize: '0.76rem',
+                    color: '#91A6BE',
+                    marginTop: '0.35rem',
+                    lineHeight: 1.4
+                  }}>
+                    Authoritative server timer &bull; Single global live player &bull; Audit trail
                   </div>
-
-                  {/* Bottom Action */}
-                  <div 
-                    onClick={() => {
-                      if (user && user.role === 'ADMIN') {
-                        navigate('/manager');
-                      } else if (user && user.role === 'AUCTIONEER') {
-                        navigate('/auctioneer');
-                      } else {
-                        navigate('/management');
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingTop: '0.85rem',
-                      borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.72rem',
-                      color: '#91A6BE',
-                      letterSpacing: '0.06em'
-                    }}>
-                      DIRECTOR CREDENTIALS
-                    </span>
-                    <span style={{
-                      fontFamily: "'Outfit', sans-serif",
-                      fontSize: '0.82rem',
-                      fontWeight: '700',
-                      color: '#FFC928',
-                      letterSpacing: '0.06em'
-                    }}>
-                      OPERATIONS LOGIN &rarr;
-                    </span>
-                  </div>
-
                 </div>
               </div>
-            );
-          })()}
+
+              {/* Bottom Action */}
+              <div 
+                onClick={() => navigate('/management')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingTop: '0.85rem',
+                  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                  cursor: 'pointer'
+                }}
+              >
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.72rem',
+                  color: '#91A6BE',
+                  letterSpacing: '0.06em'
+                }}>
+                  DIRECTOR CREDENTIALS
+                </span>
+                <span style={{
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: '0.82rem',
+                  fontWeight: '700',
+                  color: '#FFC928',
+                  letterSpacing: '0.06em'
+                }}>
+                  AUTHENTICATE OPERATOR &rarr;
+                </span>
+              </div>
+
+            </div>
+          </div>
 
         </div>
 

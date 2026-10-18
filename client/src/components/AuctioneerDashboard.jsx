@@ -4,25 +4,6 @@ import { useAuth } from '../AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-export const getPoolNumber = (poolStr) => {
-  if (!poolStr) return 999;
-  const match = String(poolStr).match(/POOL\s*[-]?\s*(\d+)/i);
-  return match ? parseInt(match[1], 10) : 999;
-};
-
-export const sortPlayersByPool = (playerList) => {
-  if (!Array.isArray(playerList)) return [];
-  return [...playerList].sort((a, b) => {
-    const poolA = getPoolNumber(a.pool);
-    const poolB = getPoolNumber(b.pool);
-    if (poolA !== poolB) return poolA - poolB;
-    if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
-      return a.order - b.order;
-    }
-    return (a.name || '').localeCompare(b.name || '');
-  });
-};
-
 export default function AuctioneerDashboard({ locationIdOverride }) {
   const { user } = useAuth();
   const [locations, setLocations] = useState([]);
@@ -188,8 +169,6 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         setTimerDeadline(null);
         setTimerSecondsLeft(null);
         fetchTeams();
-        fetchPlayers();
-        socket.emit('livePlayerUpdated', null);
         alert('Auction reset completed successfully.');
       }
     } catch (err) {
@@ -269,13 +248,11 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       setAutoAdvanceCountdown(null);
       isResolvingRef.current = false;
       
-      // Look for next pending player strictly by pool order (Pool 1 before Pool 2, etc.)
-      const remainingInSlot = sortPlayersByPool(
-        players.filter(p => 
-          (poolFilter === 'ALL' || p.pool === poolFilter) &&
-          p.id !== livePlayer?.id &&
-          p.status === 'UPCOMING'
-        )
+      // Look for next pending player in the filtered slot
+      const remainingInSlot = players.filter(p => 
+        (poolFilter === 'ALL' || p.pool === poolFilter) &&
+        p.id !== livePlayer?.id &&
+        p.status === 'UPCOMING'
       );
 
       if (remainingInSlot.length > 0) {
@@ -294,15 +271,13 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         setPlayerHistory(prev => [...prev, livePlayer]);
       }
 
-      const upcomingPool = sortPlayersByPool(
-        players.filter(p => 
-          (poolFilter === 'ALL' || p.pool === poolFilter) && 
-          p.status === 'UPCOMING' &&
-          p.id !== livePlayer?.id
-        )
+      const upcomingPool = players.filter(p => 
+        (poolFilter === 'ALL' || p.pool === poolFilter) && 
+        p.status === 'UPCOMING' &&
+        p.id !== livePlayer?.id
       );
 
-      const nextCandidate = targetId || upcomingPool[0]?.id;
+      const nextCandidate = targetId || upcomingPool[0]?.id || players.find(p => p.status === 'UPCOMING')?.id;
 
       if (!nextCandidate) {
         setSlotCompletedNotice(true);
@@ -384,10 +359,12 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       setBidHistory([]);
       fetchTeams();
 
-      // Ensure previous player is in local player list if not already, maintaining strict pool order
+      // Ensure previous player is in local player list if not already
       setPlayers(prev => {
-        const list = prev.some(p => p.id === loadedPlayer.id) ? prev : [loadedPlayer, ...prev];
-        return sortPlayersByPool(list);
+        if (!prev.some(p => p.id === loadedPlayer.id)) {
+          return [loadedPlayer, ...prev];
+        }
+        return prev;
       });
     } catch (err) {
       console.error('Failed to return to previous player:', err);
@@ -399,7 +376,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       socket.emit('joinLocation', selectedLocation);
       fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
         .then(res => res.json())
-        .then(data => setPlayers(sortPlayersByPool(data.filter(p => p.status === 'UPCOMING'))))
+        .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
         .catch(console.error);
 
       socket.on('playerSold', (player) => {
@@ -919,7 +896,14 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
             >
               <option value="ALL">ALL PLAYER CATEGORIES</option>
               {[...new Set(players.filter(p => p.pool).map(p => p.pool))]
-                .sort((a, b) => getPoolNumber(a) - getPoolNumber(b))
+                .sort((a, b) => {
+                  const getPoolNumber = (poolStr) => {
+                    if (!poolStr) return 999;
+                    const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
+                    return match ? parseInt(match[1], 10) : 999;
+                  };
+                  return getPoolNumber(a) - getPoolNumber(b);
+                })
                 .map(pool => (
                 <option key={pool} value={pool}>{pool}</option>
               ))}
@@ -927,7 +911,19 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           )}
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
-            {sortPlayersByPool(players.filter(p => poolFilter === 'ALL' || p.pool === poolFilter))
+            {players
+              .filter(p => poolFilter === 'ALL' || p.pool === poolFilter)
+              .sort((a, b) => {
+                const getPoolNumber = (poolStr) => {
+                  if (!poolStr) return 999;
+                  const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
+                  return match ? parseInt(match[1], 10) : 999;
+                };
+                const poolNumA = getPoolNumber(a.pool);
+                const poolNumB = getPoolNumber(b.pool);
+                if (poolNumA !== poolNumB) return poolNumA - poolNumB;
+                return a.name.localeCompare(b.name);
+              })
               .map(p => (
               <div key={p.id} style={{ 
                 display: 'flex', 

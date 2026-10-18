@@ -314,24 +314,6 @@ app.delete('/api/locations/:id', async (req, res) => {
   }
 });
 
-const sortPlayersByPool = (list) => {
-  if (!Array.isArray(list)) return [];
-  const getPoolNumber = (poolStr) => {
-    if (!poolStr) return 999;
-    const match = String(poolStr).match(/POOL\s*[-]?\s*(\d+)/i);
-    return match ? parseInt(match[1], 10) : 999;
-  };
-  return [...list].sort((a, b) => {
-    const poolA = getPoolNumber(a.pool);
-    const poolB = getPoolNumber(b.pool);
-    if (poolA !== poolB) return poolA - poolB;
-    if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
-      return a.order - b.order;
-    }
-    return (a.name || '').localeCompare(b.name || '');
-  });
-};
-
 app.get('/api/locations/:locationId/players', async (req, res) => {
   try {
     const locationId = req.params.locationId;
@@ -352,7 +334,7 @@ app.get('/api/locations/:locationId/players', async (req, res) => {
       };
     });
 
-    res.json(sortPlayersByPool(players));
+    res.json(players);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -378,7 +360,7 @@ app.get('/api/players', async (req, res) => {
       };
     });
 
-    res.json(sortPlayersByPool(players));
+    res.json(players);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -596,20 +578,19 @@ app.post('/api/auction/set-live', async (req, res) => {
 
     let targetPlayerId = playerId;
 
-    // If no playerId provided, select the next UPCOMING player strictly by pool order
+    // If no playerId provided, select the next UPCOMING player
     if (!targetPlayerId) {
       const nextSnap = await db
         .collection('players')
         .where('locationId', '==', locationId)
         .where('status', '==', 'UPCOMING')
+        .limit(1)
         .get();
 
       if (nextSnap.empty) {
         return res.status(400).json({ error: 'No upcoming players in the queue' });
       }
-      const upcoming = nextSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const sorted = sortPlayersByPool(upcoming);
-      targetPlayerId = sorted[0].id;
+      targetPlayerId = nextSnap.docs[0].id;
     }
 
     const duration = Number(durationSeconds) || 30;
@@ -834,8 +815,6 @@ app.post('/api/auction/reset', async (req, res) => {
 
     await batch.commit();
 
-    broadcastEvent(locId, 'livePlayerUpdated', null);
-    broadcastEvent(locId, 'timerUpdated', { locationId: locId, deadlineMs: null, paused: false, remainingMs: null });
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
     await logAuditEvent('AUCTION_RESET', { locationId: locId }, locId);
     res.json({ success: true, message: 'Auction reset successfully for location: ' + locId });

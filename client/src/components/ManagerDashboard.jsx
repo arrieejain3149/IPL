@@ -99,6 +99,10 @@ export default function ManagerDashboard() {
            });
            
            setGlobalPlayers(uniquePlayers);
+           if (uniquePlayers.length > 0) {
+             setPreviewPlayers(uniquePlayers);
+             setUploadSuccess(true);
+           }
         }
       } else {
         setGlobalPlayers([]);
@@ -638,7 +642,7 @@ export default function ManagerDashboard() {
         {/* LIVE AUCTION TAB */}
         {activeTab === 'LIVE_AUCTION' && (
           <div style={{ width: '100%' }}>
-            <AuctioneerDashboard locationIdOverride={selectedLocation?.id || locations[0]?.id || 'main_arena'} />
+            <AuctioneerDashboard locationIdOverride={selectedLocation?.id} />
           </div>
         )}
 
