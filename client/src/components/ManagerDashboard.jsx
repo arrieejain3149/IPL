@@ -2,12 +2,11 @@ import { useEffect, useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import socket from '../socket';
 import playerImageMap from '../playerImageMap.json';
-import AuctioneerDashboard from './AuctioneerDashboard';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 export default function ManagerDashboard() {
-  const [activeTab, setActiveTab] = useState('LIVE_AUCTION');
+  const [activeTab, setActiveTab] = useState('DASHBOARD');
   
   const [teams, setTeams] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -501,7 +500,7 @@ export default function ManagerDashboard() {
       <div key={location.id} style={{ marginBottom: '2.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <h3 style={{ color: 'var(--gold-bright)', margin: 0, fontWeight: '800', letterSpacing: '0.04em' }}>
-            {location.name.toUpperCase()} STANDINGS & VALUATION
+            {location.name} Results
           </h3>
           <span className="badge badge-gold">VENUE AUDIT</span>
         </div>
@@ -547,22 +546,8 @@ export default function ManagerDashboard() {
           <span style={{ fontSize: '0.7rem', color: 'var(--gold-primary)', fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
             OPERATIONS DESK
           </span>
-          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', fontWeight: '800', margin: '0.2rem 0 0 0' }}>DIRECTOR MENU</h3>
+          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', fontWeight: '800', margin: '0.2rem 0 0 0' }}>Admin Panel</h3>
         </div>
-        <button 
-          onClick={() => { setActiveTab('LIVE_AUCTION'); }}
-          className="btn"
-          style={{ 
-            background: activeTab === 'LIVE_AUCTION' ? 'var(--gold-surface)' : 'transparent', 
-            color: activeTab === 'LIVE_AUCTION' ? 'var(--gold-bright)' : 'var(--text-secondary)', 
-            border: activeTab === 'LIVE_AUCTION' ? '1px solid var(--gold-border)' : '1px solid transparent',
-            justifyContent: 'flex-start',
-            fontSize: '0.82rem',
-            padding: '0.75rem 1rem'
-          }}
-        >
-          LIVE GAVEL CONSOLE
-        </button>
         <button 
           onClick={() => { setActiveTab('DASHBOARD'); setSelectedLocation(null); }}
           className="btn"
@@ -575,7 +560,7 @@ export default function ManagerDashboard() {
             padding: '0.75rem 1rem'
           }}
         >
-          TELEMETRY OVERVIEW
+          Overview
         </button>
         <button 
           onClick={() => { setActiveTab('LEADERBOARDS'); setSelectedLocation(null); }}
@@ -589,7 +574,7 @@ export default function ManagerDashboard() {
             padding: '0.75rem 1rem'
           }}
         >
-          TOURNAMENT STANDINGS
+          LeaderBoard
         </button>
         <button 
           onClick={() => { setActiveTab('VENUES'); setSelectedLocation(null); }}
@@ -603,7 +588,7 @@ export default function ManagerDashboard() {
             padding: '0.75rem 1rem'
           }}
         >
-          ARENA & OPERATORS
+          Venues and Users
         </button>
         <button 
           onClick={() => { setActiveTab('CONFIG'); setSelectedLocation(null); }}
@@ -639,18 +624,16 @@ export default function ManagerDashboard() {
       {/* MAIN CONTENT AREA */}
       <div className="dashboard-main" style={{ overflowY: 'auto' }}>
         
-        {/* LIVE AUCTION TAB */}
-        {activeTab === 'LIVE_AUCTION' && (
-          <div style={{ width: '100%' }}>
-            <AuctioneerDashboard locationIdOverride={selectedLocation?.id} />
-          </div>
-        )}
-
         {/* DASHBOARD TAB */}
         {activeTab === 'DASHBOARD' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             <div className="glass-panel" style={{ padding: '2rem' }}>
-              <h1 style={{ color: '#ffffff', marginBottom: '1.5rem', fontWeight: '800' }}>Global Auction Telemetry</h1>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+                <h1 style={{ color: '#ffffff', margin: 0, fontWeight: '800', letterSpacing: '0.02em' }}>
+                  Global Analytics
+                </h1>
+                <span className="badge badge-gold">SYSTEM OVERVIEW</span>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
                 <div style={{ background: 'rgba(10, 13, 18, 0.85)', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
                   <h3 style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'JetBrains Mono, monospace' }}>Active Venues</h3>
@@ -668,7 +651,7 @@ export default function ManagerDashboard() {
             </div>
 
             <div className="glass-panel" style={{ padding: '2rem' }}>
-              <h2 style={{ marginBottom: '1rem', color: 'var(--primary)' }}>Global Activity Feed</h2>
+              <h2 style={{ marginBottom: '1rem', color: 'var(--gold-bright)' }}>Global Activity Feed</h2>
               <div className="activity-feed" style={{ maxHeight: '300px' }}>
                 {feedLog.length === 0 ? <p className="text-muted">No recent global activity.</p> : null}
                 {feedLog.map(log => (
@@ -684,7 +667,7 @@ export default function ManagerDashboard() {
         {/* LEADERBOARDS TAB */}
         {activeTab === 'LEADERBOARDS' && (
           <div className="glass-panel" style={{ padding: '2rem' }}>
-            <h1 style={{ marginBottom: '1.5rem', color: '#ffffff', fontWeight: '800' }}>Venue Performance Audits</h1>
+            <h1 style={{ marginBottom: '1.5rem', color: '#ffffff', fontWeight: '800' }}>Venue-Wise Results</h1>
             {locations.length > 0 ? (
               locations.map(loc => renderLocationLeaderboard(loc))
             ) : (
@@ -709,7 +692,7 @@ export default function ManagerDashboard() {
                     style={{ flex: 1 }}
                     required
                   />
-                  <button type="submit" className="btn" style={{ background: 'var(--primary)' }}>Add Venue</button>
+                  <button type="submit" className="btn" style={{ background: 'var(--gold-surface)', color: 'var(--gold-bright)', border: '1px solid var(--gold-border)', fontWeight: '700' }}>Add Venue</button>
                 </form>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
@@ -722,7 +705,14 @@ export default function ManagerDashboard() {
                       <button 
                         onClick={() => setSelectedLocation(loc)}
                         className="btn" 
-                        style={{ width: '100%', background: 'var(--primary)' }}
+                        style={{ 
+                          width: '100%', 
+                          background: 'var(--gold-surface)', 
+                          color: 'var(--gold-bright)', 
+                          border: '1px solid var(--gold-border)',
+                          fontWeight: '700',
+                          letterSpacing: '0.04em'
+                        }}
                       >
                         Manage Venue Users
                       </button>
@@ -1092,11 +1082,44 @@ export default function ManagerDashboard() {
                       </div>
                       <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                         {uploadSuccess ? (
-                          <button onClick={() => { setPreviewPlayers(null); setUploadSuccess(false); }} className="btn" style={{ background: 'var(--primary)', color: '#000' }}>Upload Another File</button>
+                          <button 
+                            onClick={() => { setPreviewPlayers(null); setUploadSuccess(false); }} 
+                            className="btn" 
+                            style={{ 
+                              background: 'var(--gold-surface)', 
+                              color: 'var(--gold-bright)', 
+                              border: '1px solid var(--gold-border)', 
+                              fontWeight: '700' 
+                            }}
+                          >
+                            Upload Another File
+                          </button>
                         ) : (
                           <>
-                            <button onClick={() => { setPreviewPlayers(null); setUploadSuccess(false); }} className="btn" style={{ background: 'rgba(255,255,255,0.1)' }}>Cancel</button>
-                            <button onClick={handleConfirmUpload} className="btn" style={{ background: 'var(--success)', color: '#000' }}>Confirm & Upload</button>
+                            <button 
+                              onClick={() => { setPreviewPlayers(null); setUploadSuccess(false); }} 
+                              className="btn" 
+                              style={{ 
+                                background: 'rgba(255,255,255,0.08)', 
+                                color: 'var(--text-secondary)', 
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                fontWeight: '600' 
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              onClick={handleConfirmUpload} 
+                              className="btn" 
+                              style={{ 
+                                background: 'var(--emerald-surface)', 
+                                color: 'var(--emerald-live)', 
+                                border: '1px solid var(--emerald-border)', 
+                                fontWeight: '800' 
+                              }}
+                            >
+                              Confirm & Upload
+                            </button>
                           </>
                         )}
                       </div>

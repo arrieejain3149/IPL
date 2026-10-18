@@ -390,6 +390,14 @@ class FirestoreAuctionRealtimeBridge {
             try {
               const data = JSON.parse(e.data);
               this.emitLocal(evName, data);
+              if (evName === 'bidReversed') {
+                this.emitLocal('newBid', {
+                  playerId: data.playerId,
+                  teamId: data.previousTeamId,
+                  amount: data.previousAmount,
+                  locationId: data.locationId,
+                });
+              }
             } catch (err) {
               console.warn('[SSE] Event parse warning:', err);
             }

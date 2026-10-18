@@ -8,7 +8,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const { user } = useAuth();
   const [locations, setLocations] = useState([]);
   const [adminSelectedLocation, setAdminSelectedLocation] = useState(null);
-  const selectedLocation = locationIdOverride || adminSelectedLocation || user?.locationId || (locations[0]?.id || null);
+  const selectedLocation = locationIdOverride || (user?.role === 'AUCTIONEER' ? user.locationId : (adminSelectedLocation || user?.locationId || (locations[0]?.id || null)));
 
   const [players, setPlayers] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -30,8 +30,14 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmInput, setResetConfirmInput] = useState('');
 
-  // Auto-Pilot & Slot Progression State
-  const [autoPilotEnabled, setAutoPilotEnabled] = useState(true);
+  // Auto-Pilot & Slot Progression State (defaults to FALSE / OFF, persists in localStorage)
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('ipl_auctioneer_autopilot') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
   const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState(null);
   const [slotCompletedNotice, setSlotCompletedNotice] = useState(false);
   const [playerHistory, setPlayerHistory] = useState([]);
@@ -73,8 +79,8 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       setTimerSecondsLeft(sec);
       if (remainingMs <= 0) {
         clearInterval(interval);
-        // Automatically resolve current lot if active and not already resolving
-        if (!isResolvingRef.current && livePlayer && livePlayer.status === 'LIVE') {
+        // Only automatically resolve current lot if AUTO-PILOT is explicitly ON!
+        if (autoPilotEnabled && !isResolvingRef.current && livePlayer && livePlayer.status === 'LIVE') {
           isResolvingRef.current = true;
           autoResolveLot();
         }
@@ -162,6 +168,12 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       if (res.ok) {
         setShowResetModal(false);
         setResetConfirmInput('');
+        setAutoAdvanceCountdown(null);
+        isResolvingRef.current = false;
+        setAutoPilotEnabled(false);
+        try {
+          localStorage.setItem('ipl_auctioneer_autopilot', 'false');
+        } catch (e) {}
         setLivePlayer(null);
         setCurrentBid('');
         setBiddingTeam('');
@@ -374,9 +386,18 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   useEffect(() => {
     if (selectedLocation) {
       socket.emit('joinLocation', selectedLocation);
+      fetchTeams();
       fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
         .then(res => res.json())
-        .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
+        .then(data => {
+          const live = data.find(p => p.status === 'LIVE');
+          setLivePlayer(live || null);
+          if (live) {
+            setCurrentBid(live.currentBid || live.basePrice);
+            setBiddingTeam(live.currentBidTeamId || '');
+          }
+          setPlayers(data.filter(p => p.status === 'UPCOMING'));
+        })
         .catch(console.error);
 
       socket.on('playerSold', (player) => {
@@ -431,6 +452,26 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         }
       });
 
+      socket.on('auctionReset', () => {
+        setAutoAdvanceCountdown(null);
+        isResolvingRef.current = false;
+        setAutoPilotEnabled(false);
+        try {
+          localStorage.setItem('ipl_auctioneer_autopilot', 'false');
+        } catch (e) {}
+        setLivePlayer(null);
+        setCurrentBid('');
+        setBiddingTeam('');
+        setBidHistory([]);
+        setTimerDeadline(null);
+        setTimerSecondsLeft(null);
+        fetchTeams();
+        fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
+          .then(res => res.json())
+          .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
+          .catch(console.error);
+      });
+
       return () => {
         socket.off('playerSold');
         socket.off('penaltyIssued');
@@ -438,6 +479,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         socket.off('timerUpdated');
         socket.off('auctionStarting');
         socket.off('auctionBreakToggled');
+        socket.off('auctionReset');
       };
     }
   }, [selectedLocation]);
@@ -517,13 +559,13 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   };
 
   const issuePenalty = (teamId) => {
-    if (window.confirm("Confirm: Issue formal rule infraction penalty? 3 infractions triggers automated disqualification.")) {
+    if (window.confirm("Confirm: Issue formal rule warning penalty? 3 warnings triggers automated disqualification.")) {
       socket.emit('issuePenalty', { teamId, locationId: selectedLocation });
     }
   };
 
   const reversePenalty = (teamId) => {
-    if (window.confirm("Confirm: Reverse last infraction penalty for this franchise?")) {
+    if (window.confirm("Confirm: Reverse last warning penalty for this franchise?")) {
       socket.emit('reversePenalty', { teamId, locationId: selectedLocation });
     }
   };
@@ -635,10 +677,47 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         flexWrap: 'wrap', 
         gap: '1rem' 
       }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span className="badge badge-gold" style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem' }}>
-            IPL MEGA AUCTION ARENA 2026
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {locations.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace', fontWeight: '700' }}>
+                VENUE:
+              </span>
+              {user?.role === 'ADMIN' ? (
+                <select
+                  value={selectedLocation || ''}
+                  onChange={(e) => setAdminSelectedLocation(e.target.value)}
+                  className="form-input"
+                  style={{
+                    width: 'auto',
+                    padding: '0.35rem 0.75rem',
+                    fontSize: '0.8rem',
+                    fontWeight: '700',
+                    color: 'var(--gold-bright)',
+                    borderColor: 'var(--gold-border)',
+                    background: 'rgba(16, 21, 29, 0.95)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {locations.map(loc => (
+                    <option key={loc.id} value={loc.id}>{loc.name} Venue</option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{
+                  padding: '0.35rem 0.75rem',
+                  fontSize: '0.82rem',
+                  fontWeight: '800',
+                  color: 'var(--gold-bright)',
+                  background: 'rgba(212, 175, 55, 0.1)',
+                  border: '1px solid var(--gold-border)',
+                  borderRadius: '4px'
+                }}>
+                  {locations.find(l => l.id === selectedLocation)?.name || 'Arena'} Venue
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -713,8 +792,17 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           <button
             className={`btn ${autoPilotEnabled ? 'btn-gold' : 'btn-secondary'}`}
             onClick={() => {
-              setAutoPilotEnabled(prev => !prev);
-              if (autoPilotEnabled) setAutoAdvanceCountdown(null);
+              setAutoPilotEnabled(prev => {
+                const nextVal = !prev;
+                try {
+                  localStorage.setItem('ipl_auctioneer_autopilot', String(nextVal));
+                } catch (e) {}
+                if (!nextVal) {
+                  setAutoAdvanceCountdown(null);
+                  isResolvingRef.current = false;
+                }
+                return nextVal;
+              });
             }}
             style={{ 
               padding: '0.55rem 1rem', 
@@ -1231,7 +1319,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
               ) : (
                 <>
                   <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#ffffff', margin: 0 }}>
-                    Gavel Stage Awaiting Session Start
+                    Auction Stage Awaiting Session Start
                   </h2>
 
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '500px', textAlign: 'center', margin: 0, lineHeight: '1.5' }}>
@@ -1332,7 +1420,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                 {/* Penalty Status & Controls */}
                 <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '0.4rem' }}>
                   <span style={{ fontSize: '0.7rem', color: t.mistakes >= 3 ? 'var(--crimson-danger)' : t.mistakes > 0 ? 'var(--amber-warning)' : 'var(--text-dim)', fontWeight: '700', fontFamily: 'JetBrains Mono, monospace' }}>
-                    INFRACTIONS: {t.mistakes || 0}/3 {t.isDisqualified ? '[LOCKED]' : ''}
+                    WARNINGS: {t.mistakes || 0}/3 {t.isDisqualified ? '[LOCKED]' : ''}
                   </span>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     {t.mistakes > 0 && (
@@ -1419,7 +1507,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           }}>
             {auctionStartingCountdown > 0 
               ? 'Broadcasting to Team Leader War Rooms — First Lot Loading...' 
-              : 'Gavel stage live — Lot #1 entering now!'}
+              : 'Auction stage live — Lot #1 entering now!'}
           </p>
 
           {auctionStartingCountdown > 0 ? (

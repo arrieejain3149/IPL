@@ -7,6 +7,7 @@ import ViewerDashboard from './components/ViewerDashboard';
 import Login from './components/Login';
 import LandingPage from './components/LandingPage';
 import ThemedTeamDashboard from './components/ThemedTeamDashboard';
+import IntroOverlay from './components/IntroOverlay';
 import { useAuth } from './AuthContext';
 
 const ProtectedRoute = ({ children, requiredRole }) => {
@@ -14,15 +15,9 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   const location = useLocation();
 
   if (!user) {
-    if (requiredRole === 'TEAM_LEADER') {
-      return children;
-    }
     return <Navigate to={`/login${location.search}`} />;
   }
-  if (requiredRole && user.role !== requiredRole) {
-    if (requiredRole === 'TEAM_LEADER') {
-      return children;
-    }
+  if (requiredRole && user.role !== requiredRole && user.role !== 'ADMIN') {
     return <Navigate to="/" />;
   }
   return children;
@@ -33,25 +28,35 @@ const NavigationBar = () => {
   const location = useLocation();
 
   // Hide the navbar on public landing, viewer, and public modal routes
-  if (['/', '/room', '/teams', '/how-to-play', '/login', '/management', '/viewer'].includes(location.pathname)) {
+  if (['/', '/room', '/teams', '/login', '/management', '/viewer'].includes(location.pathname)) {
     return null;
   }
+
+  const isAuctioneerPortal = location.pathname === '/auctioneer' || user?.role === 'AUCTIONEER';
 
   const getRoleBadge = (role) => {
     switch (role) {
       case 'ADMIN': return 'ADMIN';
-      case 'AUCTIONEER': return 'GAVEL MASTER';
+      case 'AUCTIONEER': return '';
       case 'TEAM_LEADER': return 'FRANCHISE DESK';
       default: return 'OPERATOR';
     }
   };
 
+  const getBadgeLabel = () => {
+    if (!user) return '';
+    if (user.role === 'ADMIN') return 'ADMIN';
+    if (user.role === 'AUCTIONEER') return user.username;
+    const roleBadge = getRoleBadge(user.role);
+    return roleBadge ? `${roleBadge}: ${user.username}` : user.username;
+  };
+
   return (
     <header className="navbar">
       <Link to="/" className="nav-brand-wrap" title="Back to Home">
-        <span className="nav-status-pill"></span>
-        <span className="nav-brand">IPL AUCTION ARENA</span>
-        <span className="nav-subtext">ADMIN PANEL</span>
+        <span className="nav-brand" style={{ textTransform: 'none' }}>
+          IPL Auction
+        </span>
       </Link>
 
       <div className="nav-links">
@@ -61,14 +66,14 @@ const NavigationBar = () => {
         {user && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span className="badge badge-gold">
-              {user.role === 'ADMIN' ? 'ADMIN' : `${getRoleBadge(user.role)}: ${user.username}`}
+              {getBadgeLabel()}
             </span>
             <button 
               onClick={logout} 
               className="btn btn-secondary" 
               style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }}
             >
-              Disconnect
+              Logout
             </button>
           </div>
         )}
@@ -81,6 +86,7 @@ function App() {
   return (
     <Router>
       <div className="app-container">
+        <IntroOverlay />
         <NavigationBar />
         
         <main className="main-content">
@@ -88,7 +94,7 @@ function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/room" element={<ViewerDashboard />} />
             <Route path="/teams" element={<LandingPage initialSection="teams" />} />
-            <Route path="/how-to-play" element={<LandingPage initialSection="how-to-play" />} />
+            <Route path="/how-to-play" element={<Navigate to="/" replace />} />
             <Route path="/login" element={<Login portalName="Franchise War Room Access" />} />
             <Route path="/management" element={<Login portalName="Operations Command Authentication" />} />
             <Route path="/manager" element={
@@ -100,8 +106,12 @@ function App() {
             <Route path="/team-leader" element={
               <ProtectedRoute requiredRole="TEAM_LEADER"><TeamLeaderDashboard /></ProtectedRoute>
             } />
-            <Route path="/team" element={<ThemedTeamDashboard forcedTeamId="dc" />} />
-            <Route path="/team/:teamId" element={<ThemedTeamDashboard />} />
+            <Route path="/team" element={
+              <ProtectedRoute requiredRole="TEAM_LEADER"><ThemedTeamDashboard forcedTeamId="dc" /></ProtectedRoute>
+            } />
+            <Route path="/team/:teamId" element={
+              <ProtectedRoute requiredRole="TEAM_LEADER"><ThemedTeamDashboard /></ProtectedRoute>
+            } />
             <Route path="/viewer" element={<ViewerDashboard />} />
           </Routes>
         </main>

@@ -135,7 +135,7 @@ export default function Login({ portalName }) {
             color: '#ffffff',
             letterSpacing: '-0.02em'
           }}>
-            {teamParam ? `${teamParam.toUpperCase()} War Room Access` : (portalName || 'System Authentication')}
+            {teamParam ? `${teamParam.toUpperCase()} Room Access` : (portalName || 'System Authentication')}
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.35rem' }}>
             Provide designated operator credentials to initialize session

@@ -7,29 +7,24 @@ export default function LandingPage({ initialSection }) {
   const location = useLocation();
   const { user, login, logout } = useAuth();
 
-  const handleFranchiseEnter = async (teamCode) => {
+  const handleFranchiseEnter = (teamCode) => {
     const code = teamCode.toLowerCase();
-    try {
-      if (login) {
-        await login(code, 'password');
-      }
+    if (user && (user.role === 'ADMIN' || (user.role === 'TEAM_LEADER' && user.username?.toLowerCase() === code))) {
       navigate('/team-leader?team=' + code);
-    } catch (e) {
-      navigate('/team-leader?team=' + code);
+    } else {
+      navigate('/login?team=' + code);
     }
   };
 
-  // Active navigation tab highlight: 'auction' | 'teams' | 'how-to-play'
+  // Active navigation tab highlight: 'auction' | 'teams'
   const [activeTab, setActiveTab] = useState(() => {
     if (initialSection === 'teams' || location.pathname === '/teams') return 'teams';
-    if (initialSection === 'how-to-play' || location.pathname === '/how-to-play') return 'how-to-play';
     return 'auction';
   });
 
   // Modals for deep-linked routes
   const [modalOpen, setModalOpen] = useState(() => {
     if (initialSection === 'teams' || location.pathname === '/teams') return 'teams';
-    if (initialSection === 'how-to-play' || location.pathname === '/how-to-play') return 'how-to-play';
     return null;
   });
 
@@ -39,9 +34,6 @@ export default function LandingPage({ initialSection }) {
     if (location.pathname === '/teams' || initialSection === 'teams') {
       setActiveTab('teams');
       setModalOpen('teams');
-    } else if (location.pathname === '/how-to-play' || initialSection === 'how-to-play') {
-      setActiveTab('how-to-play');
-      setModalOpen('how-to-play');
     } else {
       setActiveTab('auction');
       setModalOpen(null);
@@ -57,9 +49,6 @@ export default function LandingPage({ initialSection }) {
     } else if (tab === 'teams') {
       setModalOpen('teams');
       navigate('/teams');
-    } else if (tab === 'how-to-play') {
-      setModalOpen('how-to-play');
-      navigate('/how-to-play');
     }
   };
 
@@ -154,160 +143,112 @@ export default function LandingPage({ initialSection }) {
               color: '#FFC928',
               textTransform: 'uppercase'
             }}>
-              AUCTION PRO
+              BIDDING BEFORE WICKET
             </span>
           </div>
 
-          {/* Middle Navigation Links (AUCTION, TEAM, HOW TO PLAY) */}
-          <div className="desktop-nav-links" style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '2.5rem',
-            height: '100%'
-          }}>
-            {[
-              { id: 'auction', label: 'AUCTION' },
-              { id: 'teams', label: 'TEAM' },
-              { id: 'how-to-play', label: 'HOW TO PLAY' }
-            ].map((link) => {
-              const isActive = activeTab === link.id;
-              return (
-                <button
-                  key={link.id}
-                  onClick={() => handleNavClick(link.id)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    outline: 'none',
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    fontFamily: "'Outfit', sans-serif",
-                    fontSize: '0.86rem',
-                    fontWeight: isActive ? '800' : '600',
-                    color: isActive ? '#FFFFFF' : '#91A6BE',
-                    letterSpacing: '0.1em',
-                    textTransform: 'uppercase',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    transition: 'color 0.2s ease',
-                    padding: '0 0.25rem'
-                  }}
-                  onMouseOver={(e) => { if (!isActive) e.currentTarget.style.color = '#FFFFFF'; }}
-                  onMouseOut={(e) => { if (!isActive) e.currentTarget.style.color = '#91A6BE'; }}
-                >
-                  {link.label}
-                  {isActive && (
-                    <span style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: '3px',
-                      backgroundColor: '#FFC928',
-                      boxShadow: '0 -1px 8px rgba(255, 201, 40, 0.6)'
-                    }}></span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Right Side: LIVE AUCTIONS & LOGIN */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-            
-            {/* LIVE AUCTIONS Button with Red Indicator */}
-            <button
-              onClick={() => navigate('/viewer')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.55rem',
-                padding: '0.5rem 1rem',
-                backgroundColor: 'rgba(6, 24, 39, 0.8)',
-                border: '1px solid rgba(255, 59, 48, 0.45)',
-                borderRadius: '5px',
-                color: '#F5F7FA',
-                fontFamily: "'Outfit', sans-serif",
-                fontSize: '0.78rem',
-                fontWeight: '700',
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: '0 0 12px rgba(255, 59, 48, 0.15)'
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.borderColor = '#FF3B30';
-                e.currentTarget.style.backgroundColor = 'rgba(255, 59, 48, 0.12)';
-                e.currentTarget.style.boxShadow = '0 0 16px rgba(255, 59, 48, 0.35)';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(255, 59, 48, 0.45)';
-                e.currentTarget.style.backgroundColor = 'rgba(6, 24, 39, 0.8)';
-                e.currentTarget.style.boxShadow = '0 0 12px rgba(255, 59, 48, 0.15)';
-              }}
-            >
-              <span className="live-dot-red"></span>
-              <span>LIVE AUCTIONS</span>
-            </button>
-
-            {/* User Profile or LOGIN Button */}
+          {/* Right Side: LOGIN or Authenticated User Badge + LOGOUT */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
             {user ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                {/* User Role / Franchise Portal Button */}
                 <button
                   onClick={() => {
                     if (user.role === 'ADMIN') navigate('/manager');
                     else if (user.role === 'AUCTIONEER') navigate('/auctioneer');
-                    else if (user.role === 'TEAM_LEADER') navigate('/team-leader');
+                    else if (user.role === 'TEAM_LEADER') navigate(`/team-leader?team=${user.username || ''}`);
                     else navigate('/viewer');
                   }}
+                  title={user.role === 'ADMIN' ? 'Go to Admin Command Center' : 'Go to Franchise Room'}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '0.45rem',
-                    padding: '0.5rem 0.95rem',
-                    backgroundColor: 'rgba(255, 201, 40, 0.12)',
-                    border: '1px solid #FFC928',
+                    padding: '0.46rem 0.95rem',
+                    backgroundColor: user.role === 'ADMIN' ? 'rgba(255, 201, 40, 0.12)' : 'rgba(0, 168, 255, 0.12)',
+                    border: user.role === 'ADMIN' ? '1px solid #FFC928' : '1px solid rgba(0, 168, 255, 0.5)',
                     borderRadius: '5px',
-                    color: '#FFC928',
+                    color: user.role === 'ADMIN' ? '#FFC928' : '#FFFFFF',
                     fontFamily: "'Outfit', sans-serif",
                     fontSize: '0.78rem',
-                    fontWeight: '700',
-                    letterSpacing: '0.06em',
-                    cursor: 'pointer'
+                    fontWeight: '800',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: user.role === 'ADMIN' ? '0 0 12px rgba(255, 201, 40, 0.2)' : '0 0 12px rgba(0, 168, 255, 0.2)'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = user.role === 'ADMIN' ? 'rgba(255, 201, 40, 0.22)' : 'rgba(0, 168, 255, 0.25)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = user.role === 'ADMIN' ? 'rgba(255, 201, 40, 0.12)' : 'rgba(0, 168, 255, 0.12)';
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                     <circle cx="12" cy="7" r="4"></circle>
                   </svg>
-                  <span>{user.username.toUpperCase()}</span>
+                  <span>
+                    {user.role === 'ADMIN' 
+                      ? 'ADMIN' 
+                      : user.role === 'TEAM_LEADER' 
+                        ? `${user.username.toUpperCase()} ROOM` 
+                        : user.role === 'AUCTIONEER' 
+                          ? 'AUCTIONEER' 
+                          : user.username.toUpperCase()}
+                  </span>
                 </button>
+
+                {/* LOGOUT Button */}
                 <button
                   onClick={logout}
-                  title="Sign Out"
+                  title="Log out of session"
                   style={{
-                    padding: '0.5rem 0.65rem',
-                    backgroundColor: 'transparent',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.46rem 0.8rem',
+                    backgroundColor: 'rgba(255, 59, 48, 0.08)',
+                    border: '1px solid rgba(255, 59, 48, 0.35)',
                     borderRadius: '5px',
-                    color: '#91A6BE',
+                    color: '#FF6B6B',
+                    fontFamily: "'Outfit', sans-serif",
+                    fontSize: '0.74rem',
+                    fontWeight: '700',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
                     cursor: 'pointer',
-                    fontSize: '0.75rem'
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 59, 48, 0.2)';
+                    e.currentTarget.style.borderColor = '#FF3B30';
+                    e.currentTarget.style.color = '#FFFFFF';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 59, 48, 0.08)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 59, 48, 0.35)';
+                    e.currentTarget.style.color = '#FF6B6B';
                   }}
                 >
-                  ✕
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                  </svg>
+                  <span>LOGOUT</span>
                 </button>
               </div>
             ) : (
+              /* When not logged in: Clean LOGIN button */
               <button
                 onClick={() => navigate('/login')}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.45rem',
-                  padding: '0.5rem 1.15rem',
+                  padding: '0.48rem 1.15rem',
                   backgroundColor: 'rgba(0, 168, 255, 0.1)',
                   border: '1px solid rgba(0, 168, 255, 0.4)',
                   borderRadius: '5px',
@@ -329,72 +270,16 @@ export default function LandingPage({ initialSection }) {
                   e.currentTarget.style.backgroundColor = 'rgba(0, 168, 255, 0.1)';
                 }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                   <circle cx="12" cy="7" r="4"></circle>
                 </svg>
                 <span>LOGIN</span>
               </button>
             )}
-
-            {/* Mobile hamburger button */}
-            <button
-              className="mobile-menu-btn"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              style={{
-                display: 'none',
-                background: 'transparent',
-                border: 'none',
-                color: '#FFFFFF',
-                padding: '0.4rem',
-                cursor: 'pointer'
-              }}
-              aria-label="Toggle Navigation Menu"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="12" x2="21" y2="12"></line>
-                <line x1="3" y1="6" x2="21" y2="6"></line>
-                <line x1="3" y1="18" x2="21" y2="18"></line>
-              </svg>
-            </button>
           </div>
 
         </div>
-
-        {/* Mobile Dropdown Nav Menu */}
-        {mobileMenuOpen && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '1rem 1.5rem',
-            backgroundColor: '#061827',
-            borderTop: '1px solid rgba(0, 168, 255, 0.2)'
-          }}>
-            {[
-              { id: 'auction', label: 'AUCTION' },
-              { id: 'teams', label: 'TEAM' },
-              { id: 'how-to-play', label: 'HOW TO PLAY' }
-            ].map(link => (
-              <button
-                key={link.id}
-                onClick={() => handleNavClick(link.id)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  textAlign: 'left',
-                  padding: '0.75rem 0',
-                  color: activeTab === link.id ? '#FFC928' : '#F5F7FA',
-                  fontFamily: "'Outfit', sans-serif",
-                  fontSize: '0.95rem',
-                  fontWeight: '700',
-                  cursor: 'pointer'
-                }}
-              >
-                {link.label}
-              </button>
-            ))}
-          </div>
-        )}
       </nav>
 
       {/* =====================================================================
@@ -551,43 +436,6 @@ export default function LandingPage({ initialSection }) {
                 <span>ENTER AUCTION &rarr;</span>
               </button>
 
-              {/* Secondary: WATCH LIVE AUCTIONS */}
-              <button
-                onClick={() => navigate('/viewer')}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.65rem',
-                  padding: '0.72rem 1.45rem',
-                  backgroundColor: 'rgba(3, 16, 31, 0.75)',
-                  color: '#F5F7FA',
-                  fontFamily: "'Outfit', sans-serif",
-                  fontSize: '0.88rem',
-                  fontWeight: '700',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  border: '1.5px solid #00A8FF',
-                  borderRadius: '5px',
-                  cursor: 'pointer',
-                  backdropFilter: 'blur(6px)',
-                  transition: 'all 0.2s ease'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(0, 168, 255, 0.18)';
-                  e.currentTarget.style.borderColor = '#38bdf8';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(3, 16, 31, 0.75)';
-                  e.currentTarget.style.borderColor = '#00A8FF';
-                }}
-              >
-                {/* Play icon */}
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-                <span>WATCH LIVE AUCTIONS</span>
-              </button>
-
             </div>
 
           </div>
@@ -664,27 +512,13 @@ export default function LandingPage({ initialSection }) {
             gap: '1rem'
           }}>
             <div>
-              {/* Header row: Live indicator & NO LOGIN REQUIRED badge */}
+              {/* Header row: NO LOGIN REQUIRED badge */}
               <div style={{
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent: 'flex-end',
                 alignItems: 'center',
                 marginBottom: '0.65rem'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                  <span className="live-dot-green"></span>
-                  <span style={{
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '0.74rem',
-                    letterSpacing: '0.14em',
-                    color: '#00E6A0',
-                    fontWeight: '700',
-                    textTransform: 'uppercase'
-                  }}>
-                    PUBLIC LIVE FEED
-                  </span>
-                </div>
-
                 <span style={{
                   padding: '0.25rem 0.65rem',
                   backgroundColor: 'rgba(255, 201, 40, 0.08)',
@@ -701,7 +535,7 @@ export default function LandingPage({ initialSection }) {
                 </span>
               </div>
 
-              {/* Panel C Heading */}
+              {/* Live Viewer Card Heading */}
               <h2 style={{
                 fontFamily: "'Outfit', sans-serif",
                 fontSize: '1.85rem',
@@ -710,7 +544,7 @@ export default function LandingPage({ initialSection }) {
                 letterSpacing: '-0.02em',
                 margin: '0 0 0.5rem 0'
               }}>
-                Panel C — Live Auction Arena
+                Enter Live Viewer
               </h2>
 
               {/* Description */}
@@ -721,7 +555,7 @@ export default function LandingPage({ initialSection }) {
                 margin: 0,
                 maxWidth: '750px'
               }}>
-                Watch the auction, live bids, team competition, and player sales unfold in real time. Read-only global telecast optimized for arena projectors, desktops, and mobile devices.
+                Join the global audience. Watch the high-stakes bidding action unfold live across all venues without needing an account.
               </p>
             </div>
 
@@ -741,20 +575,25 @@ export default function LandingPage({ initialSection }) {
                 color: '#91A6BE',
                 letterSpacing: '0.06em'
               }}>
-                GLOBAL FEED &bull; 10 FRANCHISES &bull; 211 PLAYERS
+                10 FRANCHISES &bull; 211 PLAYERS
               </span>
 
               <span style={{
                 fontFamily: "'Outfit', sans-serif",
-                fontSize: '0.86rem',
-                color: '#FFC928',
-                fontWeight: '800',
-                letterSpacing: '0.08em',
+                fontSize: '0.84rem',
+                color: '#00E6A0',
+                fontWeight: '700',
+                letterSpacing: '0.06em',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.4rem'
+                gap: '0.45rem',
+                padding: '0.35rem 0.95rem',
+                borderRadius: '50px',
+                border: '1px solid rgba(0, 230, 160, 0.45)',
+                backgroundColor: 'rgba(0, 230, 160, 0.08)',
+                transition: 'all 0.2s ease'
               }}>
-                WATCH LIVE FEED &rarr;
+                Public Access &rarr;
               </span>
             </div>
 
@@ -813,24 +652,9 @@ export default function LandingPage({ initialSection }) {
                 left: '1.5rem',
                 right: '1.5rem',
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent: 'flex-end',
                 alignItems: 'center'
               }}>
-                <span style={{
-                  padding: '0.22rem 0.6rem',
-                  backgroundColor: 'rgba(0, 168, 255, 0.15)',
-                  border: '1px solid rgba(0, 168, 255, 0.45)',
-                  borderRadius: '3px',
-                  color: '#00A8FF',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: '0.68rem',
-                  fontWeight: '700',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase'
-                }}>
-                  FRANCHISE SECURITY CLEARANCE
-                </span>
-
                 <span style={{
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: '0.72rem',
@@ -851,7 +675,7 @@ export default function LandingPage({ initialSection }) {
                   color: '#F5F7FA',
                   margin: '0 0 0.5rem 0'
                 }}>
-                  Panel B — Franchise War Room
+                  Franchise Room
                 </h3>
 
                 <p style={{
@@ -874,7 +698,7 @@ export default function LandingPage({ initialSection }) {
                     <button
                       key={team.code}
                       onClick={() => handleFranchiseEnter(team.code)}
-                      title={`${team.name} — Click to enter War Room`}
+                      title={`${team.name} — Click to enter Room`}
                       style={{
                         padding: '0.55rem 0.35rem',
                         backgroundColor: 'rgba(3, 16, 31, 0.85)',
@@ -931,20 +755,12 @@ export default function LandingPage({ initialSection }) {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
+                  justifyContent: 'flex-end',
                   paddingTop: '0.85rem',
                   borderTop: '1px solid rgba(255, 255, 255, 0.08)',
                   cursor: 'pointer'
                 }}
               >
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: '0.72rem',
-                  color: '#91A6BE',
-                  letterSpacing: '0.06em'
-                }}>
-                  TEAM PASSKEY AUTH
-                </span>
                 <span style={{
                   fontFamily: "'Outfit', sans-serif",
                   fontSize: '0.82rem',
@@ -952,7 +768,7 @@ export default function LandingPage({ initialSection }) {
                   color: '#00A8FF',
                   letterSpacing: '0.06em'
                 }}>
-                  ENTER WAR ROOM &rarr;
+                  ENTER ROOM &rarr;
                 </span>
               </div>
 
@@ -1002,24 +818,9 @@ export default function LandingPage({ initialSection }) {
                 left: '1.5rem',
                 right: '1.5rem',
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent: 'flex-end',
                 alignItems: 'center'
               }}>
-                <span style={{
-                  padding: '0.22rem 0.6rem',
-                  backgroundColor: 'rgba(255, 201, 40, 0.12)',
-                  border: '1px solid rgba(255, 201, 40, 0.4)',
-                  borderRadius: '3px',
-                  color: '#FFC928',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: '0.68rem',
-                  fontWeight: '700',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase'
-                }}>
-                  CONTROL ROOM ACCESS
-                </span>
-
                 <span style={{
                   fontFamily: "'JetBrains Mono', monospace",
                   fontSize: '0.72rem',
@@ -1040,7 +841,7 @@ export default function LandingPage({ initialSection }) {
                   color: '#F5F7FA',
                   margin: '0 0 0.5rem 0'
                 }}>
-                  Panel A — Operations Command
+                  System Admin
                 </h3>
 
                 <p style={{
@@ -1051,33 +852,6 @@ export default function LandingPage({ initialSection }) {
                 }}>
                   Authorized auction operators can initialize an authenticated session and control the entire auction: global timer, countdowns, player queues, emergency pauses, and financial settlements.
                 </p>
-
-                {/* Restrained Outlined Information Area */}
-                <div style={{
-                  padding: '0.85rem 1rem',
-                  backgroundColor: 'rgba(255, 201, 40, 0.04)',
-                  border: '1px dashed rgba(255, 201, 40, 0.3)',
-                  borderRadius: '5px',
-                  marginBottom: '1.25rem'
-                }}>
-                  <div style={{
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '0.75rem',
-                    color: '#FFC928',
-                    fontWeight: '700',
-                    letterSpacing: '0.08em'
-                  }}>
-                    ROLE: AUCTIONEER &bull; DIRECTOR
-                  </div>
-                  <div style={{
-                    fontSize: '0.76rem',
-                    color: '#91A6BE',
-                    marginTop: '0.35rem',
-                    lineHeight: 1.4
-                  }}>
-                    Authoritative server timer &bull; Single global live player &bull; Audit trail
-                  </div>
-                </div>
               </div>
 
               {/* Bottom Action */}
@@ -1086,20 +860,12 @@ export default function LandingPage({ initialSection }) {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
+                  justifyContent: 'flex-end',
                   paddingTop: '0.85rem',
                   borderTop: '1px solid rgba(255, 255, 255, 0.08)',
                   cursor: 'pointer'
                 }}
               >
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: '0.72rem',
-                  color: '#91A6BE',
-                  letterSpacing: '0.06em'
-                }}>
-                  DIRECTOR CREDENTIALS
-                </span>
                 <span style={{
                   fontFamily: "'Outfit', sans-serif",
                   fontSize: '0.82rem',
@@ -1107,7 +873,7 @@ export default function LandingPage({ initialSection }) {
                   color: '#FFC928',
                   letterSpacing: '0.06em'
                 }}>
-                  AUTHENTICATE OPERATOR &rarr;
+                  SYSTEM ACCESS &rarr;
                 </span>
               </div>
 
@@ -1188,7 +954,7 @@ export default function LandingPage({ initialSection }) {
                 Ten Franchises. One Trophy.
               </h2>
               <p style={{ color: '#91A6BE', fontSize: '0.9rem', marginTop: '0.35rem' }}>
-                Select your franchise to authenticate your war room credentials and monitor squad quotas.
+                Select your franchise to authenticate your credentials and monitor squad quotas.
               </p>
             </div>
 
@@ -1253,273 +1019,6 @@ export default function LandingPage({ initialSection }) {
       )}
 
       {/* =====================================================================
-          AUTHENTIC MODAL: HOW TO PLAY / AUCTION RULEBOOK (/how-to-play)
-          ===================================================================== */}
-      {modalOpen === 'how-to-play' && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(3, 16, 31, 0.88)',
-          backdropFilter: 'blur(8px)',
-          zIndex: 200,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1.5rem'
-        }}>
-          <div style={{
-            maxWidth: '860px',
-            width: '100%',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            backgroundColor: '#061827',
-            border: '1px solid #00A8FF',
-            borderRadius: '10px',
-            padding: '2.25rem',
-            position: 'relative',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.9)'
-          }}>
-            <button
-              onClick={closeModal}
-              style={{
-                position: 'absolute',
-                top: '1.25rem',
-                right: '1.25rem',
-                background: 'transparent',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '50%',
-                width: '32px',
-                height: '32px',
-                color: '#F5F7FA',
-                cursor: 'pointer',
-                fontSize: '1rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              ✕
-            </button>
-
-            <div style={{ marginBottom: '1.75rem' }}>
-              <div style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: '0.75rem',
-                color: '#FFC928',
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                marginBottom: '0.35rem'
-              }}>
-                OFFICIAL AUCTION OPERATING MANUAL
-              </div>
-              <h2 style={{
-                fontFamily: "'Outfit', sans-serif",
-                fontSize: '1.9rem',
-                fontWeight: '900',
-                color: '#F5F7FA',
-                margin: 0
-              }}>
-                How To Play — IPL Auction Pro
-              </h2>
-              <p style={{ color: '#91A6BE', fontSize: '0.92rem', marginTop: '0.4rem' }}>
-                Master the rules of the authoritative cricket player bidding arena before stepping into the war room.
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-
-              {/* Rule 1 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #FFC928',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#FFC928', margin: '0 0 0.4rem 0' }}>
-                  1. Franchise Budget &amp; Purse (₹90 Crore)
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0 }}>
-                  Each team leader is endowed with an authoritative purse of ₹90 Crore (₹900,000,000). The auction engine enforces real-time atomic balance checks to prevent overspending. Any bid exceeding available purse is automatically blocked by the server. Your purse can change during the auction through the Budget Boost Power (see Section 7).
-                </p>
-              </div>
-
-              {/* Rule 2 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #00A8FF',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#00A8FF', margin: '0 0 0.4rem 0' }}>
-                  2. Squad Quotas &amp; Foreign Player Caps
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0 }}>
-                  Franchises must assemble a squad of minimum 18 players and maximum 25 players. A strict limit of at most 8 overseas (international) players is enforced. Teams must ensure sufficient remaining funds to fill all unfilled required slots. Every squad must also meet these minimum composition requirements:
-                </p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0.5rem 0 0 0', paddingLeft: '1.25rem' }}>
-                  <li>Batsmen: minimum 4</li>
-                  <li>Bowlers: minimum 4</li>
-                  <li>Wicketkeeper: minimum 1</li>
-                  <li>All-rounders: minimum 3</li>
-                </ul>
-              </div>
-
-              {/* Rule 3 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #00E6A0',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#00E6A0', margin: '0 0 0.4rem 0' }}>
-                  3. Synchronized Server Timer &amp; Gavel Countdown
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0 }}>
-                  Every lot has an authoritative 30-second server countdown clock. Whenever a valid bid is recorded, the timer resets, giving opposing franchises an opportunity to counter-bid. If the timer expires with no new bids, the auctioneer hits the gavel and awards the player.
-                </p>
-              </div>
-
-              {/* Rule 4 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #FF3B30',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#FF3B30', margin: '0 0 0.4rem 0' }}>
-                  4. Penalties &amp; Disqualification Safeguards
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0 }}>
-                  Operators retain emergency controls to pause the timer, retract erroneous bids, or penalize unruly franchise desks. Repeated infractions incur automatic bidding lockouts to guarantee fair competition. Any form of misconduct, unfair practice, or disruption may result in penalties or disqualification. The decisions of the organizers and the auction committee are final and binding in all matters related to the event.
-                </p>
-              </div>
-
-              {/* Rule 5 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #FFC928',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#FFC928', margin: '0 0 0.4rem 0' }}>
-                  5. Team Ratings &amp; Rankings
-                </h4>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>Teams are evaluated based on their overall team rating.</li>
-                  <li>If two or more teams have identical ratings, this tie-breaker applies: the team with the higher remaining budget after team selection is ranked above the other.</li>
-                  <li>If a tie still persists, the decision of the organizing committee is final and binding.</li>
-                </ul>
-              </div>
-
-
-              {/* Rule 6 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #00E6A0',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#00E6A0', margin: '0 0 0.4rem 0' }}>
-                  6. Special Power: Jump Bidding
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0 0 0.5rem 0' }}>
-                  To make the auction more strategic and exciting, each team has access to two special powers. Each can be used only once.
-                </p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0 0 0.5rem 0', paddingLeft: '1.25rem' }}>
-                  <li>Each team may use the Jump Bidding Power only once during the entire auction.</li>
-                  <li>This power allows a team to bypass the standard bidding increments and directly place any higher bid above the current amount.</li>
-                </ul>
-                <p style={{ color: '#00E6A0', fontSize: '0.86rem', fontWeight: '700', margin: '0.75rem 0 0.35rem 0' }}>Important Conditions</p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>A team may directly quote any amount higher than the current bid.</li>
-                  <li>If no other team places a bid after the jump bid, the initiating team is compulsorily required to purchase the player at the quoted amount.</li>
-                  <li>The Jump Bidding Power may only be used once by each team.</li>
-                  <li>Once used, it cannot be revoked, transferred, or reused.</li>
-                </ul>
-              </div>
-
-              {/* Rule 7 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #FF3B30',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#FF3B30', margin: '0 0 0.4rem 0' }}>
-                  7. Special Power: Budget Boost
-                </h4>
-                <p style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0 0 0.5rem 0' }}>
-                  A high-risk, high-reward power that each team may activate only once during the entire auction.
-                </p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0 0 0.5rem 0', paddingLeft: '1.25rem' }}>
-                  <li>A 5-minute break is provided after every round, during which teams may choose to activate this power.</li>
-                </ul>
-                <p style={{ color: '#FF3B30', fontSize: '0.86rem', fontWeight: '700', margin: '0.75rem 0 0.35rem 0' }}>How It Works</p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: '0 0 0.5rem 0', paddingLeft: '1.25rem' }}>
-                  <li>The team is asked one bonus question related to Cricket or General Knowledge.</li>
-                  <li>If the answer is correct, the team receives a ₹2 Crore increase in its remaining budget.</li>
-                  <li>If the answer is incorrect, ₹3 Crore is deducted from its remaining budget.</li>
-                </ul>
-                <p style={{ color: '#FF3B30', fontSize: '0.86rem', fontWeight: '700', margin: '0.75rem 0 0.35rem 0' }}>Important Conditions</p>
-                <ul style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>Teams are advised to use it strategically and only when confident.</li>
-                  <li>Once a team uses the Budget Boost Power, it cannot be used again under any circumstance.</li>
-                </ul>
-              </div>
-
-              {/* Rule 8 */}
-              <div style={{
-                padding: '1.25rem',
-                backgroundColor: 'rgba(3, 16, 31, 0.7)',
-                borderLeft: '4px solid #FFC928',
-                borderRadius: '0 6px 6px 0'
-              }}>
-                <h4 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '1.05rem', fontWeight: '800', color: '#FFC928', margin: '0 0 0.4rem 0' }}>
-                  8. General Guidelines
-                </h4>
-                <ol style={{ color: '#F5F7FA', fontSize: '0.86rem', lineHeight: 1.5, margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>All participating teams must report to the venue at least half an hour before the scheduled start of the event.</li>
-                  <li>Registration is compulsory for all participants.</li>
-                  <li>Only registered participants are allowed to enter the auction and quiz areas.</li>
-                  <li>Teams must maintain discipline and sportsmanship throughout the event.</li>
-                  <li>Any form of misconduct, unfair practice, or disruption may result in penalties or disqualification.</li>
-                  <li>The decisions of the organizers and auction committee are final and binding in all matters related to the event.</li>
-                  <li>Teams are responsible for managing their budgets and player selections throughout the auction.</li>
-                  <li>Any rule not explicitly covered in this document is interpreted and decided by the organizing committee.</li>
-                </ol>
-              </div>
-
-            </div>
-
-            <div style={{ marginTop: '1.75rem', textAlign: 'center' }}>
-              <button
-                onClick={() => {
-                  closeModal();
-                  navigate('/viewer');
-                }}
-                style={{
-                  padding: '0.75rem 2rem',
-                  backgroundColor: '#FFC928',
-                  color: '#03101F',
-                  fontFamily: "'Outfit', sans-serif",
-                  fontSize: '0.88rem',
-                  fontWeight: '800',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  border: 'none',
-                  borderRadius: '5px',
-                  cursor: 'pointer'
-                }}
-              >
-                ENTER LIVE AUCTION &rarr;
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
           FOOTER (AUTHENTIC DISCLAIMER & BROADCAST SPONSOR)
           ===================================================================== */}
       <footer style={{
@@ -1545,7 +1044,7 @@ export default function LandingPage({ initialSection }) {
               color: '#F5F7FA',
               letterSpacing: '0.06em'
             }}>
-              IPL AUCTION PRO &bull; INDEPENDENT AUCTION SIMULATOR
+              BIDDING BEFORE WICKET &bull; INDEPENDENT AUCTION SIMULATOR
             </div>
             <div style={{
               color: '#91A6BE',

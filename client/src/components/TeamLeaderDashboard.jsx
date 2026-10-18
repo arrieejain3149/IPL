@@ -99,27 +99,15 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         setTeams(data);
         let myTeam = null;
 
-        // 1. Check query parameter (e.g. ?team=csk) or route parameter (/team/:teamId)
-        const teamQuery = (teamParam || routeTeamId || forcedTeamId || '').toLowerCase().trim();
-        if (teamQuery) {
-          myTeam = data.find(t => {
-            const short = (t.shortName || t.franchiseCode || '').toLowerCase();
-            const name = (t.name || '').toLowerCase();
-            const id = (t.id || '').toLowerCase();
-            return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
-          });
+        // Find user's designated team from username / teamId
+        let userTeam = null;
+        if (user?.teamId) {
+          userTeam = data.find(t => String(t.id) === String(user.teamId));
         }
-
-        // 2. Match by user.teamId
-        if (!myTeam && user?.teamId) {
-          myTeam = data.find(t => String(t.id) === String(user.teamId));
-        }
-
-        // 3. Match by user.username (supports csk, owner_csk, mi, owner_mi, rr, owner_rr, etc.)
-        if (!myTeam && user?.username) {
+        if (!userTeam && user?.username) {
           const raw = user.username.toLowerCase();
           const clean = raw.replace(/^owner_/, '');
-          myTeam = data.find(t => {
+          userTeam = data.find(t => {
             const short = (t.shortName || t.franchiseCode || '').toLowerCase();
             const name = (t.name || '').toLowerCase();
             const id = (t.id || '').toLowerCase();
@@ -127,13 +115,40 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
           });
         }
 
-        // 4. Default to first team if available
-        if (!myTeam && data.length > 0) {
-          myTeam = data[0];
+        const teamQuery = (teamParam || routeTeamId || forcedTeamId || '').toLowerCase().trim();
+
+        if (user?.role === 'ADMIN') {
+          // ADMIN can access any team requested
+          if (teamQuery) {
+            myTeam = data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              const id = (t.id || '').toLowerCase();
+              return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
+            });
+          }
+          if (!myTeam) myTeam = userTeam || data[0];
+        } else if (user?.role === 'TEAM_LEADER') {
+          // If query specifies another team that doesn't match this user, redirect to login for that team
+          if (teamQuery && userTeam) {
+            const requestedTeam = data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              const id = (t.id || '').toLowerCase();
+              return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
+            });
+            if (requestedTeam && requestedTeam.id !== userTeam.id) {
+              navigate(`/login?team=${teamQuery}`);
+              return;
+            }
+          }
+          myTeam = userTeam;
         }
 
         if (myTeam) {
           setTeamData(myTeam);
+        } else {
+          navigate(teamQuery ? `/login?team=${teamQuery}` : '/login');
         }
       })
       .catch((err) => {
@@ -198,7 +213,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         .catch(console.warn);
       setFeedLog(prev => [{ 
         id: Date.now() + Math.random(), 
-        msg: `Penalty infraction recorded against franchise`, 
+        msg: `Penalty warning recorded against franchise`, 
         type: 'penalty',
         time: new Date().toLocaleTimeString()
       }, ...prev].slice(0, 50));
@@ -279,6 +294,26 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
       }, ...prev].slice(0, 50));
     };
 
+    const onAuctionReset = () => {
+      setLivePlayer(null);
+      setTimerDeadline(null);
+      setTimerSecondsLeft(null);
+      fetch(API_URL + '/api/teams')
+        .then(r => r.ok ? r.json() : [])
+        .then(data => {
+          if (!Array.isArray(data)) return;
+          const updated = data.find(t => String(t.id) === String(teamData?.id));
+          if (updated) setTeamData(updated);
+        })
+        .catch(console.warn);
+      setFeedLog(prev => [{ 
+        id: Date.now() + Math.random(), 
+        msg: `⚠️ AUCTION HAS BEEN RESET — All player lots returned to queue`, 
+        type: 'alert',
+        time: new Date().toLocaleTimeString()
+      }, ...prev].slice(0, 50));
+    };
+
     socket.on('playerSold', onPlayerSold);
     socket.on('penaltyIssued', onPenaltyIssued);
     socket.on('newBid', onNewBid);
@@ -288,6 +323,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     socket.on('auctionBreakToggled', onAuctionBreakToggled);
     socket.on('leaderboardToggled', onLeaderboardToggled);
     socket.on('auctionStarting', onAuctionStarting);
+    socket.on('auctionReset', onAuctionReset);
 
     return () => {
       socket.off('playerSold', onPlayerSold);
@@ -299,6 +335,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
       socket.off('auctionBreakToggled', onAuctionBreakToggled);
       socket.off('leaderboardToggled', onLeaderboardToggled);
       socket.off('auctionStarting', onAuctionStarting);
+      socket.off('auctionReset', onAuctionReset);
     };
   }, [teamData]);
 
@@ -449,52 +486,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         </div>
       )}
 
-      {/* Top action navigation bar: Back to Home & Franchise quick switch */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '0.75rem',
-        padding: '0.75rem 1.25rem',
-        margin: '0.5rem 0 1rem 0',
-        background: 'linear-gradient(135deg, rgba(13, 20, 31, 0.95), rgba(8, 12, 18, 0.95))',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: '8px',
-        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)'
-      }}>
-        <button
-          onClick={() => navigate('/')}
-          className="btn btn-secondary"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            padding: '0.5rem 1.1rem',
-            fontSize: '0.82rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: '700',
-            color: '#F5F7FA',
-            background: 'rgba(255, 255, 255, 0.08)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            borderRadius: '5px',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(255, 201, 40, 0.15)';
-            e.currentTarget.style.borderColor = '#FAAE1A';
-            e.currentTarget.style.color = '#FAAE1A';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-            e.currentTarget.style.color = '#F5F7FA';
-          }}
-        >
-          &larr; Return to Home / Overview
-        </button>
-      </div>
+
 
       {/* =========================================================================
           BRANCH A: THEMED FRANCHISE DASHBOARD (For DC, KKR, PBKS, RR, SRH)
@@ -564,9 +556,6 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
               </div>
 
               <div className={styles.pbPanelHeaderStrip}>
-                <svg className={styles.pbHeaderIcon} viewBox="0 0 24 24">
-                  <path d="M12 2L15 8L21 9L17 14L18 20L12 17L6 20L7 14L3 9L9 8L12 2Z" />
-                </svg>
                 <span>{theme.code} TEAM PANEL</span>
               </div>
 
@@ -593,12 +582,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                     fontFamily: 'JetBrains Mono, monospace',
                     fontSize: '0.8rem'
                   }}>
-                    DISQUALIFIED (3 INFRACTIONS)
+                    DISQUALIFIED (3 WARNINGS)
                   </div>
                 ) : (
                   <div className={styles.pbInfractionsRow}>
                     <span className={styles.pbInfractionsLabel}>
-                      <span style={{ color: '#FFA502' }}>⚡</span> INFRACTIONS
+                      WARNINGS
                     </span>
                     <span className={`${styles.pbInfractionsVal} ${mistakes >= 2 ? styles.pbInfractionsValDanger : mistakes > 0 ? styles.pbInfractionsValWarning : ''}`}>
                       {mistakes} / 3
@@ -633,7 +622,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                 </div>
 
                 <div className={styles.pbRosterRow}>
-                  <span className={styles.pbRosterLabel}>ROSTER OCCUPANCY</span>
+                  <span className={styles.pbRosterLabel}>TOTAL PLAYERS</span>
                   <span className={styles.pbRosterVal}>
                     {players.length} <span className={styles.pbRosterMax}>/ 15</span>
                   </span>
@@ -644,7 +633,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                   className={styles.pbCtaButton}
                   onClick={() => setShowSquad(true)}
                 >
-                  <span>👥</span> VIEW FULL SQUAD ROSTER
+                  VIEW FULL SQUAD
                 </button>
               </div>
 
@@ -789,7 +778,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                 </section>
               )}
 
-              {/* Arena Activity Stream */}
+              {/* Live Auction Feed */}
               <section className={styles.pbActivityCard}>
                 <div className={styles.pbCardTopStrip}>
                   <div className={styles.pbStripSeg1} />
@@ -802,13 +791,13 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
 
                 <div className={styles.pbActivityHeader}>
                   <span className={styles.pbBroadcastDot} />
-                  <span>ARENA ACTIVITY STREAM</span>
+                  <span>LIVE AUCTION FEED</span>
                 </div>
 
                 <div className={styles.pbActivityContent}>
                   {feedLog.length === 0 ? (
                     <div className={styles.pbEmptyState}>
-                      <span>📡</span> Waiting for arena actions...
+                      Waiting for auction to begin...
                     </div>
                   ) : (
                     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -954,7 +943,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                   fontFamily: 'JetBrains Mono, monospace',
                   fontSize: '0.8rem'
                 }}>
-                  DISQUALIFIED (3 INFRACTIONS)
+                  DISQUALIFIED (3 WARNINGS)
                 </div>
               ) : (
                 <div style={{ 
@@ -968,7 +957,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                   alignItems: 'center' 
                 }}>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'JetBrains Mono, monospace' }}>
-                    INFRACTIONS
+                    WARNINGS
                   </span>
                   <span style={{ 
                     color: mistakes > 0 ? 'var(--amber-warning)' : 'var(--text-secondary)', 
@@ -1014,7 +1003,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'JetBrains Mono, monospace' }}>
-                    ROSTER OCCUPANCY
+                    TOTAL PLAYERS
                   </span>
                   <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#ffffff', fontFamily: 'JetBrains Mono, monospace' }}>
                     {players.length} <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>/ 15</span>
@@ -1027,7 +1016,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                   style={{ width: '100%', marginBottom: '1.25rem', padding: '0.65rem', fontSize: '0.75rem' }} 
                   onClick={() => setShowSquad(!showSquad)}
                 >
-                  {showSquad ? 'HIDE SQUAD ROSTER' : 'VIEW FULL SQUAD ROSTER'}
+                  {showSquad ? 'HIDE SQUAD' : 'VIEW FULL SQUAD'}
                 </button>
 
                 {/* Squad List */}
@@ -1252,12 +1241,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                 padding: '1.25rem' 
               }}>
                 <h3 style={{ fontSize: '0.85rem', color: '#ffffff', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
-                  ARENA ACTIVITY STREAM
+                  LIVE AUCTION FEED
                 </h3>
                 <div className="activity-feed">
                   {feedLog.length === 0 ? (
                     <div style={{ color: 'var(--text-dim)', fontSize: '0.8rem', fontStyle: 'italic', fontFamily: 'JetBrains Mono, monospace' }}>
-                      Waiting for arena actions...
+                      Waiting for auction to begin...
                     </div>
                   ) : null}
                   {feedLog.map(log => (
