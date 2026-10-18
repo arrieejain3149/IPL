@@ -28,8 +28,45 @@ app.use((req, res, next) => {
 // -----------------------------------------------------------------------------
 const sseClients = new Map();
 
+// High-Speed Server In-Memory Cache (0ms latency responses)
+const memoryCache = new Map();
+
+function getCached(key, ttlMs = 15000) {
+  const item = memoryCache.get(key);
+  if (!item) return null;
+  if (Date.now() - item.timestamp > ttlMs) {
+    memoryCache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function setCache(key, data) {
+  memoryCache.set(key, { data, timestamp: Date.now() });
+}
+
+function invalidateCache(pattern) {
+  if (!pattern) {
+    memoryCache.clear();
+    return;
+  }
+  for (const k of memoryCache.keys()) {
+    if (k.includes(pattern)) {
+      memoryCache.delete(k);
+    }
+  }
+}
+
 function broadcastEvent(locationId, eventType, data) {
   const locIdStr = String(locationId);
+  invalidateCache(locIdStr);
+  if (eventType === 'playerSold' || eventType === 'penaltyIssued' || eventType === 'reversePenalty') {
+    invalidateCache('teams');
+  }
+  if (eventType === 'auctionReset') {
+    invalidateCache();
+  }
+
   const clients = sseClients.get(locIdStr);
   if (clients) {
     const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -146,6 +183,9 @@ app.post('/api/login', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/teams', async (req, res) => {
   try {
+    const cached = getCached('teams_all', 20000);
+    if (cached) return res.json(cached);
+
     const [teamsSnap, playersSnap] = await Promise.all([
       db.collection('teams').get(),
       db.collection('players').where('status', '==', 'SOLD').get(),
@@ -167,6 +207,7 @@ app.get('/api/teams', async (req, res) => {
       players: soldByTeam.get(tDoc.id) || [],
     }));
 
+    setCache('teams_all', teams);
     res.json(teams);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -182,6 +223,7 @@ app.put('/api/teams/:id/disqualify', async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    invalidateCache('teams');
     const updated = await teamRef.get();
     res.json({ id: updated.id, ...updated.data() });
   } catch (err) {
@@ -194,6 +236,9 @@ app.put('/api/teams/:id/disqualify', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/locations', async (req, res) => {
   try {
+    const cached = getCached('locations_all', 20000);
+    if (cached) return res.json(cached);
+
     const [locationsSnap, teamsSnap, usersSnap] = await Promise.all([
       db.collection('locations').orderBy('name', 'asc').get(),
       db.collection('teams').get(),
@@ -223,6 +268,7 @@ app.get('/api/locations', async (req, res) => {
       users: usersByLoc.get(doc.id) || [],
     }));
 
+    setCache('locations_all', locations);
     res.json(locations);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -361,6 +407,10 @@ app.delete('/api/locations/:id', async (req, res) => {
 app.get('/api/locations/:locationId/players', async (req, res) => {
   try {
     const locationId = req.params.locationId;
+    const cacheKey = `players_${locationId}`;
+    const cached = getCached(cacheKey, 15000);
+    if (cached) return res.json(cached);
+
     const [playersSnap, teamsSnap] = await Promise.all([
       db.collection('players').where('locationId', '==', locationId).get(),
       db.collection('teams').where('locationId', '==', locationId).get(),
@@ -378,6 +428,7 @@ app.get('/api/locations/:locationId/players', async (req, res) => {
       };
     });
 
+    setCache(cacheKey, players);
     res.json(players);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -387,6 +438,10 @@ app.get('/api/locations/:locationId/players', async (req, res) => {
 app.get('/api/players', async (req, res) => {
   try {
     const locationId = req.query.locationId || 'main_arena';
+    const cacheKey = `players_${locationId}`;
+    const cached = getCached(cacheKey, 15000);
+    if (cached) return res.json(cached);
+
     const [playersSnap, teamsSnap] = await Promise.all([
       db.collection('players').where('locationId', '==', locationId).get(),
       db.collection('teams').where('locationId', '==', locationId).get(),
@@ -404,6 +459,7 @@ app.get('/api/players', async (req, res) => {
       };
     });
 
+    setCache(cacheKey, players);
     res.json(players);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -664,6 +720,9 @@ app.post('/api/auction/set-live', async (req, res) => {
 
     batch.update(playerRef, {
       status: 'LIVE',
+      locationId: String(locationId),
+      timerDeadlineMs: deadlineMs,
+      timerDurationSeconds: duration,
       currentBid: null,
       currentBidTeamId: null,
       currentBidId: null,
@@ -686,6 +745,7 @@ app.post('/api/auction/set-live', async (req, res) => {
     const livePlayerData = { 
       id: updated.id, 
       ...updated.data(), 
+      locationId: String(locationId),
       timerDeadlineMs: deadlineMs,
       timerDurationSeconds: duration 
     };
@@ -1383,7 +1443,7 @@ if (onRequest) {
 }
 
 // Run local server when called directly
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`[IPL Auction Backend] Firebase Express server running on port ${PORT}`);

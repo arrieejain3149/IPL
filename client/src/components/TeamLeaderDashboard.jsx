@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import socket from '../socket';
 import { useAuth } from '../AuthContext';
 import { teamThemes, getTeamTheme, resolveTeamKey, THEMED_FRANCHISE_KEYS } from '../config/teamThemes';
+import playerImageMap from '../playerImageMap.json';
 import styles from './ThemedTeamDashboard.module.css';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -99,7 +100,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         setTeams(data);
         let myTeam = null;
 
-        // Find user's designated team from username / teamId
+        // 1. Find user's designated team from teamId or username
         let userTeam = null;
         if (user?.teamId) {
           userTeam = data.find(t => String(t.id) === String(user.teamId));
@@ -108,6 +109,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
           const raw = user.username.toLowerCase();
           const clean = raw.replace(/^owner_/, '');
           userTeam = data.find(t => {
+            const locMatch = !user?.locationId || t.locationId === user.locationId || t.locationId === 'main_arena';
+            const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+            const name = (t.name || '').toLowerCase();
+            const id = (t.id || '').toLowerCase();
+            return locMatch && (short === clean || name.includes(clean) || id.includes(clean) || id.includes(raw));
+          }) || data.find(t => {
             const short = (t.shortName || t.franchiseCode || '').toLowerCase();
             const name = (t.name || '').toLowerCase();
             const id = (t.id || '').toLowerCase();
@@ -116,33 +123,45 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         }
 
         const teamQuery = (teamParam || routeTeamId || forcedTeamId || '').toLowerCase().trim();
+        const userShort = (userTeam?.shortName || userTeam?.franchiseCode || user?.username || '').toLowerCase().replace(/^owner_/, '');
+        const isOwnTeam = !teamQuery || teamQuery === userShort || (userTeam && (String(userTeam.id).toLowerCase() === teamQuery || userTeam.name?.toLowerCase().includes(teamQuery)));
 
         if (user?.role === 'ADMIN') {
-          // ADMIN can access any team requested
+          // ADMIN can access any franchise war room
           if (teamQuery) {
             myTeam = data.find(t => {
+              const locMatch = t.locationId === 'main_arena';
               const short = (t.shortName || t.franchiseCode || '').toLowerCase();
               const name = (t.name || '').toLowerCase();
-              const id = (t.id || '').toLowerCase();
-              return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
+              return locMatch && (short === teamQuery || name.includes(teamQuery));
+            }) || data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              return short === teamQuery || name.includes(teamQuery);
             });
           }
-          if (!myTeam) myTeam = userTeam || data[0];
+          if (!myTeam) myTeam = userTeam || data.find(t => t.locationId === 'main_arena') || data[0];
         } else if (user?.role === 'TEAM_LEADER') {
-          // If query specifies another team that doesn't match this user, redirect to login for that team
-          if (teamQuery && userTeam) {
-            const requestedTeam = data.find(t => {
-              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
-              const name = (t.name || '').toLowerCase();
-              const id = (t.id || '').toLowerCase();
-              return short === teamQuery || name.includes(teamQuery) || id.includes(teamQuery);
-            });
-            if (requestedTeam && requestedTeam.id !== userTeam.id) {
-              navigate(`/login?team=${teamQuery}`);
-              return;
-            }
+          if (!isOwnTeam && teamQuery) {
+            navigate(`/login?team=${teamQuery}`);
+            return;
           }
           myTeam = userTeam;
+        } else {
+          // Viewer or guest in war room monitor mode
+          if (teamQuery) {
+            myTeam = data.find(t => {
+              const locMatch = t.locationId === 'main_arena';
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              return locMatch && (short === teamQuery || name.includes(teamQuery));
+            }) || data.find(t => {
+              const short = (t.shortName || t.franchiseCode || '').toLowerCase();
+              const name = (t.name || '').toLowerCase();
+              return short === teamQuery || name.includes(teamQuery);
+            });
+          }
+          if (!myTeam && userTeam) myTeam = userTeam;
         }
 
         if (myTeam) {
@@ -160,20 +179,19 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
   useEffect(() => {
     if (!teamData) return;
 
-    if (teamData.locationId) {
-      socket.emit('joinLocation', teamData.locationId);
-      fetch(`${API_URL}/api/players?locationId=${teamData.locationId}`)
-        .then(r => r.ok ? r.json() : [])
-        .then(players => {
-          if (!Array.isArray(players)) return;
-          const currentLive = players.find(p => p.status === 'LIVE');
-          setLivePlayer(currentLive || null);
-          if (currentLive?.timerDeadlineMs) {
-            setTimerDeadline(currentLive.timerDeadlineMs);
-            setTimerSecondsLeft(Math.max(0, Math.ceil((currentLive.timerDeadlineMs - Date.now()) / 1000)));
-          }
-        }).catch(console.warn);
-    }
+    const targetLocId = teamData.locationId || 'main_arena';
+    socket.emit('joinLocation', targetLocId);
+    fetch(`${API_URL}/api/players?locationId=${targetLocId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(players => {
+        if (!Array.isArray(players)) return;
+        const currentLive = players.find(p => p.status === 'LIVE');
+        setLivePlayer(currentLive || null);
+        if (currentLive?.timerDeadlineMs) {
+          setTimerDeadline(currentLive.timerDeadlineMs);
+          setTimerSecondsLeft(Math.max(0, Math.ceil((currentLive.timerDeadlineMs - Date.now()) / 1000)));
+        }
+      }).catch(console.warn);
 
     const onPlayerSold = (player) => {
       const audio = document.getElementById('gavelSound');
@@ -230,11 +248,14 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     };
 
     const onLivePlayerUpdated = (player) => {
-      setLivePlayer(player);
+      setLivePlayer(player || null);
       if (player?.timerDeadlineMs) {
         setTimerDeadline(player.timerDeadlineMs);
         setTimerSecondsLeft(Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)));
         setTimerPaused(false);
+      } else if (!player) {
+        setTimerDeadline(null);
+        setTimerSecondsLeft(null);
       }
     };
 
@@ -388,7 +409,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
   const budgetCr = (teamData.budget / 10000000).toFixed(2);
   const mistakes = teamData.mistakes || 0;
 
-  const getAvatar = (name, url) => url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=141b25&color=d4af37&size=128`;
+  const getAvatar = (name, url) => {
+    if (url) return url;
+    const clean = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (playerImageMap[clean]) return playerImageMap[clean];
+    return `/players/${(name || '').toLowerCase().replace(/ /g, '_')}.png`;
+  };
 
   // Tournament Leaderboard modal view
   if (showLeaderboard) {

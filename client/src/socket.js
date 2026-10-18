@@ -29,6 +29,7 @@ class FirestoreAuctionRealtimeBridge {
     this.activeUnsubscribers = [];
     this.currentLocationId = null;
     this.currentActivePlayerId = null;
+    this.currentLivePlayer = null;
     this.previousPlayerStates = new Map();
     this.previousTeamStates = new Map();
     this.previousLocationState = null;
@@ -39,6 +40,11 @@ class FirestoreAuctionRealtimeBridge {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event).add(callback);
+    if (event === 'livePlayerUpdated' && this.currentLivePlayer) {
+      try {
+        callback(this.currentLivePlayer);
+      } catch (err) {}
+    }
     return this;
   }
 
@@ -159,7 +165,12 @@ class FirestoreAuctionRealtimeBridge {
 
   subscribeToLocation(locationId) {
     const locIdStr = String(locationId);
-    if (this.currentLocationId === locIdStr) return;
+    if (this.currentLocationId === locIdStr) {
+      if (this.currentLivePlayer) {
+        this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
+      }
+      return;
+    }
 
     // Unsubscribe previous listeners and intervals
     this.activeUnsubscribers.forEach((unsub) => {
@@ -187,16 +198,22 @@ class FirestoreAuctionRealtimeBridge {
               const livePlayerData = {
                 id: pSnap.id,
                 ...pSnap.data(),
+                locationId: locIdStr,
                 timerDeadlineMs: locData.timerDeadlineMs,
+                timerDurationSeconds: locData.timerDurationSeconds,
               };
+              this.currentLivePlayer = livePlayerData;
               this.emitLocal('livePlayerUpdated', livePlayerData);
             }
           } catch (err) {
             console.warn('[Firestore] Error fetching active player doc:', err);
           }
-        } else if (!locData.activePlayerId && this.currentActivePlayerId) {
-          this.currentActivePlayerId = null;
-          this.emitLocal('livePlayerUpdated', null);
+        } else if (!locData.activePlayerId) {
+          if (this.currentActivePlayerId || this.currentLivePlayer) {
+            this.currentActivePlayerId = null;
+            this.currentLivePlayer = null;
+            this.emitLocal('livePlayerUpdated', null);
+          }
         }
 
         if (this.previousLocationState) {
@@ -238,11 +255,26 @@ class FirestoreAuctionRealtimeBridge {
       const unsubLive = onSnapshot(
         livePlayersQuery,
         (snapshot) => {
+          if (snapshot.empty) {
+            if (this.currentActivePlayerId || this.currentLivePlayer) {
+              this.currentActivePlayerId = null;
+              this.currentLivePlayer = null;
+              this.emitLocal('livePlayerUpdated', null);
+            }
+            return;
+          }
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added' || change.type === 'modified') {
-              const player = { id: change.doc.id, ...change.doc.data() };
+              const player = { id: change.doc.id, locationId: locIdStr, ...change.doc.data() };
               this.currentActivePlayerId = player.id;
+              this.currentLivePlayer = player;
               this.emitLocal('livePlayerUpdated', player);
+            } else if (change.type === 'removed') {
+              if (this.currentActivePlayerId === change.doc.id) {
+                this.currentActivePlayerId = null;
+                this.currentLivePlayer = null;
+                this.emitLocal('livePlayerUpdated', null);
+              }
             }
           });
         },
@@ -349,21 +381,33 @@ class FirestoreAuctionRealtimeBridge {
     );
     this.activeUnsubscribers.push(unsubTeams);
 
-    // 5. Zero-Lag Fast-Heartbeat Poller (guarantees update within 1.2s across dropped packets or mobile sleep)
+    // 5. Zero-Lag Fast-Heartbeat Poller (guarantees fast real-time update within 500ms)
     const poller = setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
         if (!res.ok) return;
         const all = await res.json();
         const active = all.find((p) => p.status === 'LIVE');
-        if (active && active.id !== this.currentActivePlayerId) {
-          this.currentActivePlayerId = active.id;
-          this.emitLocal('livePlayerUpdated', active);
-        } else if (!active && this.currentActivePlayerId) {
+        if (active) {
+          const prev = this.previousPlayerStates.get(active.id);
+          if (
+            active.id !== this.currentActivePlayerId ||
+            !prev ||
+            prev.currentBid !== active.currentBid ||
+            prev.currentBidTeamId !== active.currentBidTeamId
+          ) {
+            this.currentActivePlayerId = active.id;
+            this.currentLivePlayer = { locationId: locIdStr, ...active };
+            this.previousPlayerStates.set(active.id, active);
+            this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
+          }
+        } else if (this.currentActivePlayerId) {
           this.currentActivePlayerId = null;
+          this.currentLivePlayer = null;
+          this.emitLocal('livePlayerUpdated', null);
         }
       } catch (e) {}
-    }, 1200);
+    }, 500);
     this.activeUnsubscribers.push(() => clearInterval(poller));
 
     // 6. SSE Real-time Stream Bridge (Guarantees immediate zero-config synchronization)
@@ -383,6 +427,7 @@ class FirestoreAuctionRealtimeBridge {
           'penaltyIssued',
           'auctionStarting',
           'timerUpdated',
+          'auctionReset',
         ];
 
         eventNames.forEach((evName) => {

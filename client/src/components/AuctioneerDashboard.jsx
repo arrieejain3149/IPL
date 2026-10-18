@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import socket from '../socket';
 import { useAuth } from '../AuthContext';
+import playerImageMap from '../playerImageMap.json';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -8,7 +9,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const { user } = useAuth();
   const [locations, setLocations] = useState([]);
   const [adminSelectedLocation, setAdminSelectedLocation] = useState(null);
-  const selectedLocation = locationIdOverride || (user?.role === 'AUCTIONEER' ? user.locationId : (adminSelectedLocation || user?.locationId || (locations[0]?.id || null)));
+  const selectedLocation = locationIdOverride || (user?.role === 'AUCTIONEER' ? (user?.locationId || 'main_arena') : (adminSelectedLocation || user?.locationId || 'main_arena'));
 
   const [players, setPlayers] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -17,6 +18,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const [biddingTeam, setBiddingTeam] = useState('');
   const [bidHistory, setBidHistory] = useState([]);
   const [poolFilter, setPoolFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [lastSoldPlayer, setLastSoldPlayer] = useState(null);
   const [isBreakMode, setIsBreakMode] = useState(false);
   const [animateBid, setAnimateBid] = useState(false);
@@ -200,11 +202,9 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     fetch(API_URL + '/api/teams')
       .then(res => res.json())
       .then(data => {
-        if (selectedLocation) {
-          setTeams(data.filter(t => String(t.locationId) === String(selectedLocation)));
-        } else {
-          setTeams(data);
-        }
+        if (!Array.isArray(data)) return;
+        const loc = selectedLocation || 'main_arena';
+        setTeams(data.filter(t => String(t.locationId) === String(loc)));
       })
       .catch(console.error);
   };
@@ -320,6 +320,14 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           setTimerPaused(false);
         }
         setPlayers(prev => prev.filter(p => p.id !== data.id));
+        socket.emitLocal('livePlayerUpdated', data);
+        socket.emitLocal('timerUpdated', {
+          locationId: selectedLocation,
+          deadlineMs: data.timerDeadlineMs,
+          durationSeconds: timerConfigDuration,
+          paused: false,
+          remainingMs: timerConfigDuration * 1000
+        });
       } else if (data.error) {
         alert(data.error);
       }
@@ -621,7 +629,12 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     return { eligible: true };
   };
 
-  const getAvatar = (name, url) => url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=141b25&color=d4af37&size=128`;
+  const getAvatar = (name, url) => {
+    if (url) return url;
+    const clean = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (playerImageMap[clean]) return playerImageMap[clean];
+    return `/players/${(name || '').toLowerCase().replace(/ /g, '_')}.png`;
+  };
 
   if (!selectedLocation) {
     return (
@@ -966,13 +979,31 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           height: 'calc(100vh - 170px)',
           overflow: 'hidden'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <div>
               <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#ffffff' }}>PLAYER QUEUE</h3>
               <span style={{ fontSize: '0.7rem', color: 'var(--gold-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
-                {players.length} PLAYERS REMAINING
+                {searchQuery ? `${players.filter(p => (poolFilter === 'ALL' || p.pool === poolFilter) && ((p.name || '').toLowerCase().startsWith(searchQuery.trim().toLowerCase()) || (p.name || '').toLowerCase().includes(searchQuery.trim().toLowerCase()))).length} MATCHING` : `${players.length} PLAYERS REMAINING`}
               </span>
             </div>
+            {searchQuery && (
+              <button 
+                type="button"
+                onClick={() => setSearchQuery('')}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid rgba(255, 201, 40, 0.4)',
+                  color: 'var(--gold-primary)',
+                  borderRadius: '3px',
+                  padding: '0.2rem 0.5rem',
+                  fontSize: '0.68rem',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  cursor: 'pointer'
+                }}
+              >
+                CLEAR FILTER
+              </button>
+            )}
           </div>
           
           {players.some(p => p.pool) && (
@@ -980,7 +1011,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
               value={poolFilter} 
               onChange={(e) => setPoolFilter(e.target.value)}
               className="form-input"
-              style={{ padding: '0.45rem', fontSize: '0.8rem', marginBottom: '0.75rem' }}
+              style={{ padding: '0.45rem', fontSize: '0.8rem', marginBottom: '0.5rem' }}
             >
               <option value="ALL">ALL PLAYER CATEGORIES</option>
               {[...new Set(players.filter(p => p.pool).map(p => p.pool))]
@@ -998,50 +1029,169 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
             </select>
           )}
 
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
-            {players
-              .filter(p => poolFilter === 'ALL' || p.pool === poolFilter)
-              .sort((a, b) => {
-                const getPoolNumber = (poolStr) => {
-                  if (!poolStr) return 999;
-                  const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
-                  return match ? parseInt(match[1], 10) : 999;
-                };
-                const poolNumA = getPoolNumber(a.pool);
-                const poolNumB = getPoolNumber(b.pool);
-                if (poolNumA !== poolNumB) return poolNumA - poolNumB;
-                return a.name.localeCompare(b.name);
-              })
-              .map(p => (
-              <div key={p.id} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                padding: '0.65rem 0.75rem', 
-                background: 'rgba(16, 21, 29, 0.7)', 
+          {/* Search Box with Real-Time Filtering within Selected Pool */}
+          <div style={{ position: 'relative', marginBottom: '0.75rem' }}>
+            <span style={{ 
+              position: 'absolute', 
+              left: '0.65rem', 
+              top: '50%', 
+              transform: 'translateY(-50%)', 
+              color: 'var(--text-dim)', 
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center'
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={poolFilter === 'ALL' ? "Search player name (e.g. S)..." : `Search in ${poolFilter}...`}
+              className="form-input"
+              style={{
+                width: '100%',
+                padding: '0.42rem 1.8rem 0.42rem 2rem',
+                fontSize: '0.78rem',
                 borderRadius: '4px',
-                border: '1px solid rgba(255, 255, 255, 0.04)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <img src={getAvatar(p.name, p.imageUrl)} style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover' }} alt="" />
-                  <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffffff' }}>{p.name}</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
-                      ₹{(p.basePrice / 10000000).toFixed(2)} Cr
-                    </div>
-                  </div>
-                </div>
-                <button 
-                  className="btn btn-secondary" 
-                  style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} 
-                  onClick={() => bringToLot(p)} 
-                  disabled={livePlayer && livePlayer.status === 'LIVE'}
-                >
-                  LOAD
-                </button>
-              </div>
-            ))}
+                background: 'rgba(16, 21, 29, 0.85)',
+                border: searchQuery ? '1px solid var(--gold-border)' : '1px solid rgba(255, 255, 255, 0.1)',
+                color: '#ffffff',
+                fontFamily: "'Outfit', sans-serif"
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                title="Clear search"
+                style={{
+                  position: 'absolute',
+                  right: '0.5rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-dim)',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  padding: '0.2rem',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                ✕
+              </button>
+            )}
           </div>
+
+          {(() => {
+            const rawQuery = searchQuery.trim().toLowerCase();
+            
+            // 1. Filter by current pool selection
+            const inPool = players.filter(p => poolFilter === 'ALL' || p.pool === poolFilter);
+
+            // 2. Filter by search query (prioritizing prefix matching)
+            const filteredPlayers = inPool.filter(p => {
+              if (!rawQuery) return true;
+              const name = (p.name || '').toLowerCase();
+              const words = name.split(/\s+/);
+              // Starts with query, or any word starts with query, or name contains query
+              return name.startsWith(rawQuery) || words.some(w => w.startsWith(rawQuery)) || name.includes(rawQuery);
+            });
+
+            // 3. Sort: if search is active, prioritize exact startsWith matches, then word-start matches, then alphabetical
+            const sortedPlayers = [...filteredPlayers].sort((a, b) => {
+              if (rawQuery) {
+                const aName = (a.name || '').toLowerCase();
+                const bName = (b.name || '').toLowerCase();
+                const aExactPrefix = aName.startsWith(rawQuery);
+                const bExactPrefix = bName.startsWith(rawQuery);
+                if (aExactPrefix && !bExactPrefix) return -1;
+                if (!aExactPrefix && bExactPrefix) return 1;
+
+                const aWordPrefix = aName.split(/\s+/).some(w => w.startsWith(rawQuery));
+                const bWordPrefix = bName.split(/\s+/).some(w => w.startsWith(rawQuery));
+                if (aWordPrefix && !bWordPrefix) return -1;
+                if (!aWordPrefix && bWordPrefix) return 1;
+
+                return a.name.localeCompare(b.name);
+              }
+
+              // Normal pool sorting
+              const getPoolNumber = (poolStr) => {
+                if (!poolStr) return 999;
+                const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
+                return match ? parseInt(match[1], 10) : 999;
+              };
+              const poolNumA = getPoolNumber(a.pool);
+              const poolNumB = getPoolNumber(b.pool);
+              if (poolNumA !== poolNumB) return poolNumA - poolNumB;
+              return a.name.localeCompare(b.name);
+            });
+
+            return (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
+                {sortedPlayers.length === 0 ? (
+                  <div style={{ 
+                    padding: '1.5rem 0.75rem', 
+                    textAlign: 'center', 
+                    color: 'var(--text-dim)', 
+                    fontSize: '0.8rem',
+                    fontFamily: 'JetBrains Mono, monospace'
+                  }}>
+                    <div>NO PLAYERS FOUND MATCHING &ldquo;{searchQuery}&rdquo;</div>
+                    {poolFilter !== 'ALL' && (
+                      <div style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: '#91A6BE' }}>
+                        IN {poolFilter}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="btn btn-secondary"
+                      style={{ marginTop: '0.75rem', padding: '0.3rem 0.75rem', fontSize: '0.7rem' }}
+                    >
+                      CLEAR SEARCH
+                    </button>
+                  </div>
+                ) : (
+                  sortedPlayers.map(p => (
+                    <div key={p.id} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      padding: '0.65rem 0.75rem', 
+                      background: 'rgba(16, 21, 29, 0.7)', 
+                      borderRadius: '4px',
+                      border: '1px solid rgba(255, 255, 255, 0.04)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <img src={getAvatar(p.name, p.imageUrl)} style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover' }} alt="" />
+                        <div>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffffff' }}>{p.name}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+                            ₹{(p.basePrice / 10000000).toFixed(2)} Cr
+                          </div>
+                        </div>
+                      </div>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} 
+                        onClick={() => bringToLot(p)} 
+                        disabled={livePlayer && livePlayer.status === 'LIVE'}
+                      >
+                        LOAD
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* MIDDLE COLUMN: LIVE GAVEL CONSOLE */}

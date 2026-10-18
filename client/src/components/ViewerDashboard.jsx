@@ -153,11 +153,12 @@ export default function ViewerDashboard() {
       .catch(console.error);
 
     socket.on('livePlayerUpdated', (player) => {
-      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
+      const locId = player?.locationId || selectedLocationId || 'main_arena';
+      setLivePlayers(prev => ({ ...prev, [locId]: player || null }));
       if (player?.timerDeadlineMs) {
         setTimers(prev => ({
           ...prev,
-          [player.locationId]: {
+          [locId]: {
             deadlineMs: player.timerDeadlineMs,
             remainingSec: Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)),
             paused: false
@@ -651,7 +652,7 @@ export default function ViewerDashboard() {
                     flexShrink: 0
                   }}>
                     <img
-                      src={livePlayer.imageUrl || playerImageMap[livePlayer.name?.toLowerCase().replace(/[^a-z]/g, '')] || `https://ui-avatars.com/api/?name=${encodeURIComponent(livePlayer.name || 'Player')}&background=141b25&color=d4af37&size=128`}
+                      src={livePlayer.imageUrl || playerImageMap[livePlayer.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(livePlayer.name || '').toLowerCase().replace(/ /g, '_')}.png`}
                       alt={livePlayer.name}
                       style={{ width: '85%', height: '85%', objectFit: 'contain' }}
                       onError={e => { e.target.style.display = 'none'; }}
@@ -988,7 +989,7 @@ export default function ViewerDashboard() {
 
             {/* Player Image Render */}
             <img 
-              src={player.imageUrl || playerImageMap[player.name?.toLowerCase().replace(/[^a-z]/g, '')] || `https://ui-avatars.com/api/?name=${encodeURIComponent(player.name || 'Player')}&background=141b25&color=d4af37&size=256`} 
+              src={player.imageUrl || playerImageMap[player.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(player.name || '').toLowerCase().replace(/ /g, '_')}.png`} 
               alt={player.name} 
               style={{ 
                 position: 'absolute',
@@ -1341,7 +1342,7 @@ export default function ViewerDashboard() {
                       flexShrink: 0
                     }}>
                       <img
-                        src={buy.imageUrl || playerImageMap[buy.name?.toLowerCase().replace(/[^a-z]/g, '')] || `https://ui-avatars.com/api/?name=${encodeURIComponent(buy.name || 'Player')}&background=141b25&color=d4af37&size=128`}
+                        src={buy.imageUrl || playerImageMap[buy.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(buy.name || '').toLowerCase().replace(/ /g, '_')}.png`}
                         alt={buy.name}
                         style={{ width: '85%', height: '85%', objectFit: 'contain' }}
                         onError={e => { e.target.style.display = 'none'; }}
