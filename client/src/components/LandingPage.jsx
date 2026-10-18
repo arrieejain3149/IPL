@@ -713,25 +713,27 @@ export default function LandingPage({ initialSection }) {
                   {/* Header row: Status Badge & Timer & Public Access Tag */}
                   <div style={{
                     display: 'flex',
-                    justifyContent: 'space-between',
+                    justifyContent: isPlayerActive ? 'space-between' : 'flex-end',
                     alignItems: 'center',
                     marginBottom: '0.65rem',
                     flexWrap: 'wrap',
                     gap: '0.5rem'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                      <span className={isPlayerActive ? "live-dot-green" : "live-dot-gold"}></span>
-                      <span style={{
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.74rem',
-                        letterSpacing: '0.14em',
-                        color: isPlayerActive ? '#00E6A0' : '#00A8FF',
-                        fontWeight: '700',
-                        textTransform: 'uppercase'
-                      }}>
-                        {isPlayerActive ? '● ON STAGE NOW (LIVE)' : '● AUCTION STANDBY • AWAITING AUCTIONEER'}
-                      </span>
-                    </div>
+                    {isPlayerActive && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <span className="live-dot-green"></span>
+                        <span style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: '0.74rem',
+                          letterSpacing: '0.14em',
+                          color: '#00E6A0',
+                          fontWeight: '700',
+                          textTransform: 'uppercase'
+                        }}>
+                          ● ON STAGE NOW (LIVE)
+                        </span>
+                      </div>
+                    )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {isPlayerActive && timerState.remainingSec !== undefined && (
@@ -780,7 +782,7 @@ export default function LandingPage({ initialSection }) {
                     gap: '0.75rem',
                     flexWrap: 'wrap'
                   }}>
-                    {isPlayerActive ? livePlayer.name : 'Panel C — Live Auction Arena'}
+                    {isPlayerActive ? livePlayer.name : 'Enter Live Viewer'}
                     {isPlayerActive && livePlayer?.role && (
                       <span style={{
                         fontSize: '0.8rem',
@@ -884,7 +886,7 @@ export default function LandingPage({ initialSection }) {
                       margin: 0,
                       maxWidth: '750px'
                     }}>
-                      Watch the auction, live bids, team competition, and player sales unfold in real time. Read-only global telecast optimized for arena projectors, desktops, and mobile devices.
+                      Join the global audience. Watch the high-stakes bidding action unfold live across all venues without needing an account.
                     </p>
                   )}
                 </div>
@@ -905,21 +907,41 @@ export default function LandingPage({ initialSection }) {
                     color: '#91A6BE',
                     letterSpacing: '0.06em'
                   }}>
-                    {isPlayerActive ? `LOT #${livePlayer.id || 1} IN PROGRESS • REAL-TIME FEED ACTIVE` : 'GLOBAL FEED • 10 FRANCHISES • 211 PLAYERS'}
+                    {isPlayerActive ? `LOT #${livePlayer.id || 1} IN PROGRESS • REAL-TIME FEED ACTIVE` : '10 FRANCHISES • 211 PLAYERS'}
                   </span>
 
-                  <span style={{
-                    fontFamily: "'Outfit', sans-serif",
-                    fontSize: '0.86rem',
-                    color: '#FFC928',
-                    fontWeight: '800',
-                    letterSpacing: '0.08em',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem'
-                  }}>
-                    WATCH LIVE FEED &rarr;
-                  </span>
+                  {isPlayerActive ? (
+                    <span style={{
+                      fontFamily: "'Outfit', sans-serif",
+                      fontSize: '0.86rem',
+                      color: '#FFC928',
+                      fontWeight: '800',
+                      letterSpacing: '0.08em',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.4rem'
+                    }}>
+                      WATCH LIVE FEED &rarr;
+                    </span>
+                  ) : (
+                    <span style={{
+                      fontFamily: "'Outfit', sans-serif",
+                      fontSize: '0.84rem',
+                      color: '#00E6A0',
+                      fontWeight: '700',
+                      letterSpacing: '0.06em',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: '0.35rem 0.95rem',
+                      borderRadius: '50px',
+                      border: '1px solid rgba(0, 230, 160, 0.45)',
+                      backgroundColor: 'rgba(0, 230, 160, 0.08)',
+                      transition: 'all 0.2s ease'
+                    }}>
+                      Public Access &rarr;
+                    </span>
+                  )}
                 </div>
 
               </div>
@@ -985,24 +1007,9 @@ export default function LandingPage({ initialSection }) {
                     left: '1.5rem',
                     right: '1.5rem',
                     display: 'flex',
-                    justifyContent: 'space-between',
+                    justifyContent: 'flex-end',
                     alignItems: 'center'
                   }}>
-                    <span style={{
-                      padding: '0.22rem 0.6rem',
-                      backgroundColor: 'rgba(0, 168, 255, 0.15)',
-                      border: '1px solid rgba(0, 168, 255, 0.45)',
-                      borderRadius: '3px',
-                      color: '#00A8FF',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.68rem',
-                      fontWeight: '700',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-                    }}>
-                      FRANCHISE SECURITY CLEARANCE
-                    </span>
-
                     <span style={{
                       fontFamily: "'JetBrains Mono', monospace",
                       fontSize: '0.72rem',
@@ -1024,7 +1031,7 @@ export default function LandingPage({ initialSection }) {
                       color: '#F5F7FA',
                       margin: '0 0 0.5rem 0'
                     }}>
-                      Panel B — Franchise Room
+                      Franchise Room
                     </h3>
 
                     <p style={{
@@ -1037,7 +1044,7 @@ export default function LandingPage({ initialSection }) {
                     </p>
 
                     {/* Live lot information banner inside Panel B */}
-                    {isPlayerActive ? (
+                    {isPlayerActive && (
                       <div style={{
                         padding: '0.85rem 1rem',
                         backgroundColor: 'rgba(0, 230, 160, 0.06)',
@@ -1084,23 +1091,6 @@ export default function LandingPage({ initialSection }) {
                         }}>
                           {leadingTeamCode ? `Leading Bidder: ${leadingTeamCode}` : 'Waiting for opening bid...'}
                         </div>
-                      </div>
-                    ) : (
-                      <div style={{
-                        padding: '0.75rem 1rem',
-                        backgroundColor: 'rgba(0, 168, 255, 0.04)',
-                        border: '1px dashed rgba(0, 168, 255, 0.25)',
-                        borderRadius: '5px',
-                        marginBottom: '1.25rem'
-                      }}>
-                        <span style={{
-                          fontFamily: "'JetBrains Mono', monospace",
-                          fontSize: '0.72rem',
-                          color: '#00A8FF',
-                          letterSpacing: '0.06em'
-                        }}>
-                          STANDBY &bull; READY FOR NEXT LOT
-                        </span>
                       </div>
                     )}
 
@@ -1185,7 +1175,7 @@ export default function LandingPage({ initialSection }) {
                       color: '#00A8FF',
                       letterSpacing: '0.06em'
                     }}>
-                      WAR ROOM LOGIN &rarr;
+                      ENTER ROOM &rarr;
                     </span>
                   </div>
 
@@ -1241,24 +1231,9 @@ export default function LandingPage({ initialSection }) {
                     left: '1.5rem',
                     right: '1.5rem',
                     display: 'flex',
-                    justifyContent: 'space-between',
+                    justifyContent: 'flex-end',
                     alignItems: 'center'
                   }}>
-                    <span style={{
-                      padding: '0.22rem 0.6rem',
-                      backgroundColor: 'rgba(255, 201, 40, 0.12)',
-                      border: '1px solid rgba(255, 201, 40, 0.4)',
-                      borderRadius: '3px',
-                      color: '#FFC928',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.68rem',
-                      fontWeight: '700',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-                    }}>
-                      CONTROL ROOM ACCESS
-                    </span>
-
                     <span style={{
                       fontFamily: "'JetBrains Mono', monospace",
                       fontSize: '0.72rem',
@@ -1280,7 +1255,7 @@ export default function LandingPage({ initialSection }) {
                       color: '#F5F7FA',
                       margin: '0 0 0.5rem 0'
                     }}>
-                      Panel A — Operations Command
+                      System Admin
                     </h3>
 
                     <p style={{
@@ -1292,34 +1267,34 @@ export default function LandingPage({ initialSection }) {
                       Authorized auction operators can initialize an authenticated session and control the entire auction: global timer, countdowns, player queues, emergency pauses, and financial settlements.
                     </p>
 
-                    {/* Outlined Information Area */}
-                    <div style={{
-                      padding: '0.85rem 1rem',
-                      backgroundColor: isLotActive ? 'rgba(0, 230, 160, 0.05)' : 'rgba(255, 201, 40, 0.04)',
-                      border: isLotActive ? '1px dashed rgba(0, 230, 160, 0.4)' : '1px dashed rgba(255, 201, 40, 0.3)',
-                      borderRadius: '5px',
-                      marginBottom: '1.25rem'
-                    }}>
+                    {/* Outlined Information Area when player is LIVE */}
+                    {isLotActive && (
                       <div style={{
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.75rem',
-                        color: isLotActive ? '#00E6A0' : '#FFC928',
-                        fontWeight: '700',
-                        letterSpacing: '0.08em'
+                        padding: '0.85rem 1rem',
+                        backgroundColor: 'rgba(0, 230, 160, 0.05)',
+                        border: '1px dashed rgba(0, 230, 160, 0.4)',
+                        borderRadius: '5px',
+                        marginBottom: '1.25rem'
                       }}>
-                        {isLotActive ? `ACTIVE LOT: ${livePlayer.name.toUpperCase()} (₹${((livePlayer.currentBid || livePlayer.basePrice) / 10000000).toFixed(2)} Cr)` : 'ROLE: AUCTIONEER • DIRECTOR'}
+                        <div style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: '0.75rem',
+                          color: '#00E6A0',
+                          fontWeight: '700',
+                          letterSpacing: '0.08em'
+                        }}>
+                          ACTIVE LOT: {livePlayer.name.toUpperCase()} (₹{((livePlayer.currentBid || livePlayer.basePrice) / 10000000).toFixed(2)} Cr)
+                        </div>
+                        <div style={{
+                          fontSize: '0.76rem',
+                          color: '#91A6BE',
+                          marginTop: '0.35rem',
+                          lineHeight: 1.4
+                        }}>
+                          Timer: {timerState.remainingSec}s remaining • Authoritative clock sync • Audit active
+                        </div>
                       </div>
-                      <div style={{
-                        fontSize: '0.76rem',
-                        color: '#91A6BE',
-                        marginTop: '0.35rem',
-                        lineHeight: 1.4
-                      }}>
-                        {isLotActive 
-                          ? `Timer: ${timerState.remainingSec}s remaining • Authoritative clock sync • Audit active`
-                          : 'Authoritative server timer • Single global live player • Audit trail'}
-                      </div>
-                    </div>
+                    )}
                   </div>
 
                   {/* Bottom Action */}
@@ -1336,20 +1311,12 @@ export default function LandingPage({ initialSection }) {
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
+                      justifyContent: 'flex-end',
                       paddingTop: '0.85rem',
                       borderTop: '1px solid rgba(255, 255, 255, 0.08)',
                       cursor: 'pointer'
                     }}
                   >
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.72rem',
-                      color: '#91A6BE',
-                      letterSpacing: '0.06em'
-                    }}>
-                      DIRECTOR CREDENTIALS
-                    </span>
                     <span style={{
                       fontFamily: "'Outfit', sans-serif",
                       fontSize: '0.82rem',
@@ -1357,7 +1324,7 @@ export default function LandingPage({ initialSection }) {
                       color: '#FFC928',
                       letterSpacing: '0.06em'
                     }}>
-                      OPERATIONS LOGIN &rarr;
+                      SYSTEM ACCESS &rarr;
                     </span>
                   </div>
 

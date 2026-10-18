@@ -480,6 +480,13 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           .catch(console.error);
       });
 
+      socket.on('playersLoaded', () => {
+        fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
+          .then(res => res.json())
+          .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
+          .catch(console.error);
+      });
+
       return () => {
         socket.off('playerSold');
         socket.off('penaltyIssued');
@@ -488,6 +495,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         socket.off('auctionStarting');
         socket.off('auctionBreakToggled');
         socket.off('auctionReset');
+        socket.off('playersLoaded');
       };
     }
   }, [selectedLocation]);

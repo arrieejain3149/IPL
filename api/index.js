@@ -375,6 +375,7 @@ app.post('/api/locations', async (req, res) => {
     });
 
     await batch.commit();
+    broadcastEvent('global', 'locationCreated', { id: locationRef.id, name: normalizedName });
     res.json({ id: locationRef.id, name: normalizedName });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -521,6 +522,8 @@ app.post('/api/players/bulk-global', async (req, res) => {
     if (ops > 0) {
       await batch.commit();
     }
+
+    broadcastEvent('global', 'playersLoaded', { count, locationsCount: locationsSnap.size });
 
     res.json({ success: true, count, locationsCount: locationsSnap.size });
   } catch (err) {
@@ -887,15 +890,26 @@ app.post('/api/auction/timer', async (req, res) => {
 app.post('/api/auction/reset', async (req, res) => {
   try {
     const { locationId, confirmText } = req.body;
-    if (confirmText !== 'RESET') {
+    if (confirmText && confirmText !== 'RESET') {
       return res.status(400).json({ error: 'Please confirm reset by providing confirmText: "RESET"' });
     }
     const locId = locationId || 'main_arena';
 
+    let batch = db.batch();
+    let ops = 0;
+
+    const commitIfFull = async () => {
+      ops++;
+      if (ops >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        ops = 0;
+      }
+    };
+
     // 1. Reset all players in this location to UPCOMING
     const playersSnap = await db.collection('players').where('locationId', '==', locId).get();
-    const batch = db.batch();
-    playersSnap.forEach((doc) => {
+    for (const doc of playersSnap.docs) {
       batch.update(doc.ref, {
         status: 'UPCOMING',
         currentBid: null,
@@ -903,24 +917,28 @@ app.post('/api/auction/reset', async (req, res) => {
         currentBidId: null,
         soldPrice: null,
         teamId: null,
+        timerDeadlineMs: null,
+        timerPaused: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-    });
+      await commitIfFull();
+    }
 
     // 2. Reset all team budgets
     const teamsSnap = await db.collection('teams').where('locationId', '==', locId).get();
-    teamsSnap.forEach((doc) => {
+    for (const doc of teamsSnap.docs) {
       batch.update(doc.ref, {
         budget: DEFAULT_PURSE,
         mistakes: 0,
         isDisqualified: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-    });
+      await commitIfFull();
+    }
 
     // 3. Reset location state
     const locRef = db.collection('locations').doc(locId);
-    batch.update(locRef, {
+    batch.set(locRef, {
       activePlayerId: null,
       auctionStatus: 'UPCOMING',
       timerDeadlineMs: null,
@@ -929,16 +947,21 @@ app.post('/api/auction/reset', async (req, res) => {
       isOnBreak: false,
       leaderboardVisible: false,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+    }, { merge: true });
+    await commitIfFull();
 
     // 4. Delete all bids in this location
     const bidsSnap = await db.collection('bids').where('locationId', '==', locId).get();
-    bidsSnap.forEach((doc) => {
+    for (const doc of bidsSnap.docs) {
       batch.delete(doc.ref);
-    });
+      await commitIfFull();
+    }
 
-    await batch.commit();
+    if (ops > 0) {
+      await batch.commit();
+    }
 
+    invalidateCache();
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
     await logAuditEvent('AUCTION_RESET', { locationId: locId }, locId);
     res.json({ success: true, message: 'Auction reset successfully for location: ' + locId });
@@ -976,12 +999,9 @@ app.post('/api/bids', async (req, res) => {
       const teamData = teamDoc.data();
       const locationData = locationDoc.exists ? locationDoc.data() : {};
 
-      // 1. Authoritative Timer Deadline Validation
+      // 1. Authoritative Timer State Validation
       if (locationData.timerPaused) {
         throw new Error('Auction bidding is currently paused by the auctioneer');
-      }
-      if (locationData.timerDeadlineMs && nowMs > locationData.timerDeadlineMs) {
-        throw new Error('Bidding deadline has expired. Bid rejected.');
       }
 
       // 2. Player Status Validation
@@ -999,13 +1019,22 @@ app.post('/api/bids', async (req, res) => {
       }
 
       // 4. Increment and Current Price Validation
-      const currentPrice = Number(playerData.currentBid || playerData.basePrice || 0);
-      if (numAmount <= currentPrice) {
-        throw new Error(`Bid must exceed current price of ₹${(currentPrice / 10_000_000).toFixed(2)} Cr`);
+      if (playerData.currentBid) {
+        const currentBidNum = Number(playerData.currentBid);
+        if (numAmount <= currentBidNum) {
+          throw new Error(`Bid must exceed current bid of ₹${(currentBidNum / 10_000_000).toFixed(2)} Cr`);
+        }
+      } else {
+        const basePriceNum = Number(playerData.basePrice || 0);
+        if (numAmount < basePriceNum) {
+          throw new Error(`Opening bid must be at least the base price of ₹${(basePriceNum / 10_000_000).toFixed(2)} Cr`);
+        }
       }
 
       const bidRef = db.collection('bids').doc();
       const now = admin.firestore.FieldValue.serverTimestamp();
+      const durationSeconds = Number(locationData.timerDurationSeconds) || 30;
+      const newDeadlineMs = nowMs + durationSeconds * 1000;
 
       transaction.set(bidRef, {
         locationId,
@@ -1022,6 +1051,15 @@ app.post('/api/bids', async (req, res) => {
         currentBidTeamId: teamId,
         currentBidTeamName: teamData.name || teamData.shortName,
         currentBidId: bidRef.id,
+        timerDeadlineMs: newDeadlineMs,
+        timerPaused: false,
+        updatedAt: now,
+      });
+
+      transaction.update(locationRef, {
+        timerDeadlineMs: newDeadlineMs,
+        timerPaused: false,
+        timerRemainingMs: durationSeconds * 1000,
         updatedAt: now,
       });
 
@@ -1032,11 +1070,20 @@ app.post('/api/bids', async (req, res) => {
         teamName: teamData.name || teamData.shortName,
         amount: numAmount,
         locationId,
+        newDeadlineMs,
+        durationSeconds
       };
     });
 
     await logAuditEvent('NEW_BID', result, locationId);
     broadcastEvent(locationId, 'newBid', result);
+    broadcastEvent(locationId, 'timerUpdated', {
+      locationId,
+      deadlineMs: result.newDeadlineMs,
+      paused: false,
+      remainingMs: result.durationSeconds * 1000,
+      durationSeconds: result.durationSeconds
+    });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });

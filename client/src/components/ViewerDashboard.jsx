@@ -111,8 +111,11 @@ export default function ViewerDashboard() {
       .then(res => res.json())
       .then(fetchedLocs => {
         setLocations(fetchedLocs);
-        if (fetchedLocs.length > 0 && !drawerVenueId) {
-          setDrawerVenueId(fetchedLocs[0].id);
+        if (fetchedLocs.length > 0) {
+          if (!drawerVenueId) {
+            setDrawerVenueId(fetchedLocs[0].id);
+          }
+          setSelectedLocationId(prev => prev || fetchedLocs[0].id);
         }
 
         fetchedLocs.forEach(loc => {
@@ -134,7 +137,18 @@ export default function ViewerDashboard() {
               
               const livePlayer = data.find(p => p.status === 'LIVE') || null;
               setLivePlayers(prev => ({ ...prev, [loc.id]: livePlayer }));
-              if (!livePlayer) {
+              if (livePlayer && livePlayer.currentBid) {
+                setCurrentBids(prev => ({
+                  ...prev,
+                  [loc.id]: {
+                    playerId: livePlayer.id,
+                    amount: livePlayer.currentBid,
+                    teamId: livePlayer.currentBidTeamId,
+                    teamName: livePlayer.currentBidTeamName,
+                    locationId: loc.id
+                  }
+                }));
+              } else if (!livePlayer) {
                 setCurrentBids(prev => {
                   const next = { ...prev };
                   delete next[loc.id];
@@ -154,8 +168,47 @@ export default function ViewerDashboard() {
 
     socket.on('livePlayerUpdated', (player) => {
       const locId = player?.locationId || selectedLocationId || 'main_arena';
-      setLivePlayers(prev => ({ ...prev, [locId]: player || null }));
-      if (player?.timerDeadlineMs) {
+
+      if (!player || player.isCleared || player.status === 'UPCOMING' || !player.id) {
+        setLivePlayers(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        setCurrentBids(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        setTimers(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        return;
+      }
+
+      setLivePlayers(prev => ({ ...prev, [locId]: player }));
+      if (player.currentBid) {
+        setCurrentBids(prev => ({
+          ...prev,
+          [locId]: {
+            playerId: player.id,
+            amount: player.currentBid,
+            teamId: player.currentBidTeamId,
+            teamName: player.currentBidTeamName,
+            locationId: locId
+          }
+        }));
+      } else {
+        setCurrentBids(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+      }
+
+      if (player.timerDeadlineMs) {
         setTimers(prev => ({
           ...prev,
           [locId]: {
@@ -167,7 +220,28 @@ export default function ViewerDashboard() {
       }
     });
 
+    socket.on('livePlayerCleared', (data) => {
+      if (!data || !data.locationId) return;
+      const locId = data.locationId;
+      setLivePlayers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setCurrentBids(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setTimers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+    });
+
     socket.on('timerUpdated', (data) => {
+      if (!data || !data.locationId) return;
       setTimers(prev => ({
         ...prev,
         [data.locationId]: {
@@ -181,8 +255,21 @@ export default function ViewerDashboard() {
     });
 
     socket.on('newBid', (data) => {
+      if (!data || !data.locationId) return;
       playBeep();
       setCurrentBids(prev => ({ ...prev, [data.locationId]: data }));
+      setLivePlayers(prev => {
+        const current = prev[data.locationId];
+        if (current && current.id === data.playerId) {
+          return {
+            ...current,
+            currentBid: data.amount,
+            currentBidTeamId: data.teamId,
+            currentBidTeamName: data.teamName
+          };
+        }
+        return prev;
+      });
       addActivity({
         type: 'BID',
         teamId: data.teamId,
@@ -193,11 +280,56 @@ export default function ViewerDashboard() {
       });
     });
 
+    socket.on('bidReversed', (data) => {
+      if (!data || !data.locationId) return;
+      if (data.previousAmount) {
+        setCurrentBids(prev => ({
+          ...prev,
+          [data.locationId]: {
+            amount: data.previousAmount,
+            teamId: data.previousTeamId,
+            playerId: data.playerId,
+            locationId: data.locationId
+          }
+        }));
+        setLivePlayers(prev => {
+          const current = prev[data.locationId];
+          if (current && current.id === data.playerId) {
+            return {
+              ...current,
+              currentBid: data.previousAmount,
+              currentBidTeamId: data.previousTeamId
+            };
+          }
+          return prev;
+        });
+      } else {
+        setCurrentBids(prev => {
+          const next = { ...prev };
+          delete next[data.locationId];
+          return next;
+        });
+        setLivePlayers(prev => {
+          const current = prev[data.locationId];
+          if (current && current.id === data.playerId) {
+            return {
+              ...current,
+              currentBid: null,
+              currentBidTeamId: null
+            };
+          }
+          return prev;
+        });
+      }
+    });
+
     socket.on('playerSold', (player) => {
-      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
+      if (!player || !player.locationId) return;
+      const locId = player.locationId;
+      setLivePlayers(prev => ({ ...prev, [locId]: player }));
       setCurrentBids(prev => {
         const next = { ...prev };
-        delete next[player.locationId];
+        delete next[locId];
         return next;
       });
 
@@ -206,17 +338,17 @@ export default function ViewerDashboard() {
         player,
         teamId: player.teamId,
         amount: player.soldPrice,
-        locationId: player.locationId,
+        locationId: locId,
         timestamp: Date.now()
       });
 
       // Update venue stats
       setVenueStats(prev => {
-        const current = prev[player.locationId] || { topBuys: [], totalSpent: 0, playersSold: 0 };
+        const current = prev[locId] || { topBuys: [], totalSpent: 0, playersSold: 0 };
         const newBuys = [...current.topBuys, player].sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 4);
         return {
           ...prev,
-          [player.locationId]: {
+          [locId]: {
             lastSold: player,
             topBuys: newBuys,
             totalSpent: current.totalSpent + (player.soldPrice || 0),
@@ -227,27 +359,30 @@ export default function ViewerDashboard() {
     });
 
     socket.on('playerUnsold', (player) => {
-      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
+      if (!player || !player.locationId) return;
+      const locId = player.locationId;
+      setLivePlayers(prev => ({ ...prev, [locId]: player }));
       setCurrentBids(prev => {
         const next = { ...prev };
-        delete next[player.locationId];
+        delete next[locId];
         return next;
       });
 
       addActivity({
         type: 'UNSOLD',
         player,
-        locationId: player.locationId,
+        locationId: locId,
         timestamp: Date.now()
       });
     });
 
     socket.on('auctionBreakToggled', (data) => {
+      if (!data || !data.locationId) return;
       setBreakModes(prev => ({ ...prev, [data.locationId]: data.show }));
     });
 
     socket.on('auctionStarting', (data) => {
-      const remaining = data.seconds || 5;
+      const remaining = data?.seconds || 5;
       setAuctionStartingCountdown(remaining);
     });
 
@@ -277,8 +412,10 @@ export default function ViewerDashboard() {
 
     return () => {
       socket.off('livePlayerUpdated');
+      socket.off('livePlayerCleared');
       socket.off('timerUpdated');
       socket.off('newBid');
+      socket.off('bidReversed');
       socket.off('playerSold');
       socket.off('playerUnsold');
       socket.off('auctionBreakToggled');
@@ -331,11 +468,56 @@ export default function ViewerDashboard() {
     }
   };
 
-  // Reusable Top-Right Action Buttons: [ ← Back ] [ ⛶ Fullscreen ] [ Home ]
-  // No home logo, professional back arrow (Requirement 3)
+  // Reusable Top-Right Action Buttons: [ Venue Switcher ] [ ⛶ Fullscreen ] [ Home ]
   const renderHeaderActions = (showBack = true) => (
     <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-      {showBack && (
+      {/* Venue Switcher Option on top near Fullscreen if more than 1 venue exists */}
+      {locations.length > 1 && (
+        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+          <select
+            value={selectedLocationId || locations[0]?.id || ''}
+            onChange={(e) => {
+              const newId = e.target.value;
+              setSelectedLocationId(newId);
+              setDrawerVenueId(newId);
+            }}
+            aria-label="Switch Venue"
+            style={{
+              background: 'rgba(20, 27, 37, 0.95)',
+              border: '1px solid rgba(212, 175, 55, 0.45)',
+              color: 'var(--gold-bright, #f0cc5d)',
+              padding: '0.45rem 1.8rem 0.45rem 0.85rem',
+              borderRadius: '6px',
+              fontSize: '0.82rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              outline: 'none',
+              fontFamily: 'JetBrains Mono, monospace',
+              appearance: 'none',
+              boxShadow: '0 0 10px rgba(0,0,0,0.5)',
+              transition: 'border-color 0.2s ease'
+            }}
+          >
+            {locations.map(loc => (
+              <option key={loc.id} value={loc.id} style={{ background: '#0b0f17', color: '#ffffff' }}>
+                📍 {loc.name}
+              </option>
+            ))}
+          </select>
+          <span style={{
+            position: 'absolute',
+            right: '0.6rem',
+            pointerEvents: 'none',
+            fontSize: '0.65rem',
+            color: 'var(--gold-bright, #f0cc5d)'
+          }}>
+            ▼
+          </span>
+        </div>
+      )}
+
+      {/* Only show Back button if multiple venues exist and showBack is requested */}
+      {showBack && locations.length > 1 && (
         <button
           onClick={() => setSelectedLocationId(null)}
           style={{
@@ -356,9 +538,10 @@ export default function ViewerDashboard() {
           onMouseOver={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
           onMouseOut={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'; e.currentTarget.style.background = 'rgba(20, 27, 37, 0.85)'; }}
         >
-          <span style={{ fontSize: '1rem', lineHeight: 1 }}>←</span> Back
+          <span style={{ fontSize: '1rem', lineHeight: 1 }}>←</span> All Venues
         </button>
       )}
+
       <button
         onClick={toggleFullScreen}
         style={{
@@ -381,6 +564,7 @@ export default function ViewerDashboard() {
       >
         <span>⛶</span> Fullscreen
       </button>
+
       <button
         onClick={() => navigate('/')}
         style={{
@@ -536,7 +720,11 @@ export default function ViewerDashboard() {
           const livePlayer = livePlayers[loc.id];
           const isLive = livePlayer && livePlayer.status === 'LIVE';
           const stats = venueStats[loc.id] || { totalSpent: 0, playersSold: 0 };
-          const activeBid = currentBids[loc.id];
+          const activeBid = currentBids[loc.id] || (livePlayer?.currentBid ? {
+            amount: livePlayer.currentBid,
+            teamId: livePlayer.currentBidTeamId,
+            teamName: livePlayer.currentBidTeamName
+          } : null);
           const isBreak = breakModes[loc.id];
 
           return (
@@ -714,7 +902,11 @@ export default function ViewerDashboard() {
     if (!loc) return null;
 
     const player = livePlayers[loc.id];
-    const activeBid = currentBids[loc.id];
+    const activeBid = currentBids[loc.id] || (player?.currentBid ? {
+      amount: player.currentBid,
+      teamId: player.currentBidTeamId,
+      teamName: player.currentBidTeamName
+    } : null);
 
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -956,32 +1148,45 @@ export default function ViewerDashboard() {
                 {activeBid ? (
                   <div>
                     <div style={{
-                      fontSize: '2rem',
+                      fontSize: '2.25rem',
                       fontWeight: '900',
                       color: 'var(--gold-bright, #f0cc5d)',
                       fontFamily: 'JetBrains Mono, monospace',
                       lineHeight: 1.1
                     }}>
-                      ₹{(activeBid.amount / 10000000).toFixed(2)} Cr
+                      ₹{(activeBid.amount / 10000000).toFixed(activeBid.amount % 10000000 === 0 ? 0 : 2)} CR
                     </div>
                     <div style={{
-                      fontSize: '1rem',
+                      fontSize: '1.05rem',
                       fontWeight: '800',
                       color: '#ffffff',
-                      marginTop: '0.35rem',
-                      fontFamily: 'Inter, sans-serif'
+                      marginTop: '0.45rem',
+                      fontFamily: 'Inter, sans-serif',
+                      letterSpacing: '0.02em'
                     }}>
-                      {getTeamName(activeBid.teamId)}
+                      {activeBid.teamName || getTeamName(activeBid.teamId)}
                     </div>
                   </div>
                 ) : (
-                  <div style={{
-                    fontSize: '1rem',
-                    color: 'var(--text-muted, #64748b)',
-                    fontStyle: 'italic',
-                    fontFamily: 'Inter, sans-serif'
-                  }}>
-                    Waiting for opening bid...
+                  <div>
+                    <div style={{
+                      fontSize: '1.75rem',
+                      fontWeight: '800',
+                      color: 'rgba(255, 255, 255, 0.55)',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      lineHeight: 1.1
+                    }}>
+                      ₹{((player.basePrice || 0) / 10000000).toFixed((player.basePrice || 0) % 10000000 === 0 ? 0 : 2)} CR
+                    </div>
+                    <div style={{
+                      fontSize: '0.88rem',
+                      color: 'var(--text-muted, #94a3b8)',
+                      marginTop: '0.4rem',
+                      fontStyle: 'italic',
+                      fontFamily: 'Inter, sans-serif'
+                    }}>
+                      Opening Bid (Awaiting Paddle)
+                    </div>
                   </div>
                 )}
               </div>
@@ -1152,7 +1357,7 @@ export default function ViewerDashboard() {
           height: 'calc(100vh - 2.5rem)'
         }}>
           {renderSidebar()}
-          {selectedLocationId ? renderDetailedView() : renderGlobalView()}
+          {(selectedLocationId || locations.length === 1) ? renderDetailedView() : renderGlobalView()}
         </div>
       )}
 

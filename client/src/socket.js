@@ -10,12 +10,12 @@ import {
 } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyBFd1KdOT2_tpAmTPqJ4cYm87FDZSisRN4',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'iplauction-5c41c.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'iplauction-5c41c',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'iplauction-5c41c.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '678425148616',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:678425148616:web:1e957faa5b185b05fe39fd',
 };
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -26,13 +26,19 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 class FirestoreAuctionRealtimeBridge {
   constructor() {
     this.listeners = new Map();
-    this.activeUnsubscribers = [];
-    this.currentLocationId = null;
+    this.subscribedLocations = new Set();
+    this.locationUnsubscribers = new Map();
+    this.globalUnsubscribers = [];
     this.currentActivePlayerId = null;
     this.currentLivePlayer = null;
+    this.activePlayerByLocation = new Map();
     this.previousPlayerStates = new Map();
     this.previousTeamStates = new Map();
-    this.previousLocationState = null;
+    this.previousLocationStates = new Map();
+    this.isFirestoreHealthy = false;
+
+    // Start global listeners (once)
+    this.initGlobalListeners();
   }
 
   on(event, callback) {
@@ -79,7 +85,7 @@ class FirestoreAuctionRealtimeBridge {
         return;
       }
 
-      // Map auctioneer/team actions to atomic Next.js Route Handlers
+      // Map auctioneer/team actions to authoritative backend endpoints
       if (event === 'setLivePlayer') {
         await fetch(`${API_BASE}/api/auction/set-live`, {
           method: 'POST',
@@ -163,90 +169,8 @@ class FirestoreAuctionRealtimeBridge {
     }
   }
 
-  subscribeToLocation(locationId) {
-    const locIdStr = String(locationId);
-    if (this.currentLocationId === locIdStr) {
-      if (this.currentLivePlayer) {
-        this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
-      }
-      return;
-    }
-
-    // Unsubscribe previous listeners and intervals
-    this.activeUnsubscribers.forEach((unsub) => {
-      try {
-        unsub();
-      } catch (e) {}
-    });
-    this.activeUnsubscribers = [];
-    this.currentLocationId = locIdStr;
-
-    // 1. Authoritative Venue Document Listener (locations/{locationId})
-    const locDocRef = doc(db, 'locations', locIdStr);
-    const unsubLoc = onSnapshot(
-      locDocRef,
-      async (docSnap) => {
-        if (!docSnap.exists()) return;
-        const locData = docSnap.data();
-
-        // Immediate Active Player synchronization directly from venue stage
-        if (locData.activePlayerId && locData.activePlayerId !== this.currentActivePlayerId) {
-          this.currentActivePlayerId = locData.activePlayerId;
-          try {
-            const pSnap = await getDoc(doc(db, 'players', locData.activePlayerId));
-            if (pSnap.exists()) {
-              const livePlayerData = {
-                id: pSnap.id,
-                ...pSnap.data(),
-                locationId: locIdStr,
-                timerDeadlineMs: locData.timerDeadlineMs,
-                timerDurationSeconds: locData.timerDurationSeconds,
-              };
-              this.currentLivePlayer = livePlayerData;
-              this.emitLocal('livePlayerUpdated', livePlayerData);
-            }
-          } catch (err) {
-            console.warn('[Firestore] Error fetching active player doc:', err);
-          }
-        } else if (!locData.activePlayerId) {
-          if (this.currentActivePlayerId || this.currentLivePlayer) {
-            this.currentActivePlayerId = null;
-            this.currentLivePlayer = null;
-            this.emitLocal('livePlayerUpdated', null);
-          }
-        }
-
-        if (this.previousLocationState) {
-          if (locData.isOnBreak !== this.previousLocationState.isOnBreak) {
-            this.emitLocal('auctionBreakToggled', {
-              locationId: locIdStr,
-              show: locData.isOnBreak,
-            });
-          }
-          if (locData.leaderboardVisible !== this.previousLocationState.leaderboardVisible) {
-            this.emitLocal('leaderboardToggled', locData.leaderboardVisible);
-          }
-          if (
-            locData.timerPaused !== this.previousLocationState.timerPaused ||
-            locData.timerDeadlineMs !== this.previousLocationState.timerDeadlineMs ||
-            locData.timerRemainingMs !== this.previousLocationState.timerRemainingMs
-          ) {
-            this.emitLocal('timerUpdated', {
-              locationId: locIdStr,
-              deadlineMs: locData.timerDeadlineMs,
-              paused: Boolean(locData.timerPaused),
-              remainingMs: locData.timerRemainingMs,
-              durationSeconds: locData.timerDurationSeconds,
-            });
-          }
-        }
-        this.previousLocationState = locData;
-      },
-      (error) => console.warn('[Firestore] Location snapshot warning:', error)
-    );
-    this.activeUnsubscribers.push(unsubLoc);
-
-    // 2. Direct Real-Time Listener for LIVE players (Ultra fast <50ms query)
+  initGlobalListeners() {
+    // 1. Direct Real-Time Listener for any LIVE players across the entire tournament
     try {
       const livePlayersQuery = query(
         collection(db, 'players'),
@@ -255,6 +179,7 @@ class FirestoreAuctionRealtimeBridge {
       const unsubLive = onSnapshot(
         livePlayersQuery,
         (snapshot) => {
+          this.isFirestoreHealthy = true;
           if (snapshot.empty) {
             if (this.currentActivePlayerId || this.currentLivePlayer) {
               this.currentActivePlayerId = null;
@@ -265,9 +190,13 @@ class FirestoreAuctionRealtimeBridge {
           }
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added' || change.type === 'modified') {
-              const player = { id: change.doc.id, locationId: locIdStr, ...change.doc.data() };
+              const data = change.doc.data();
+              const player = { id: change.doc.id, ...data };
               this.currentActivePlayerId = player.id;
               this.currentLivePlayer = player;
+              if (player.locationId) {
+                this.activePlayerByLocation.set(String(player.locationId), player.id);
+              }
               this.emitLocal('livePlayerUpdated', player);
             } else if (change.type === 'removed') {
               if (this.currentActivePlayerId === change.doc.id) {
@@ -278,143 +207,215 @@ class FirestoreAuctionRealtimeBridge {
             }
           });
         },
-        (error) => console.warn('[Firestore] Live player query warning:', error)
+        (error) => console.warn('[Firestore] Global live player query warning:', error)
       );
-      this.activeUnsubscribers.push(unsubLive);
+      this.globalUnsubscribers.push(unsubLive);
     } catch (err) {
-      console.warn('[Firestore] Live query setup warning:', err);
+      console.warn('[Firestore] Global live query setup warning:', err);
     }
+  }
 
-    // 3. Listen to Players collection for real-time bids, sales, unsold
-    const playersQuery = query(
-      collection(db, 'players'),
-      where('locationId', '==', locIdStr)
-    );
-    const unsubPlayers = onSnapshot(
-      playersQuery,
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const player = { id: change.doc.id, ...change.doc.data() };
-          const prev = this.previousPlayerStates.get(player.id);
+  subscribeToLocation(locationId) {
+    if (!locationId) return;
+    const locIdStr = String(locationId);
 
-          if (change.type === 'added' || change.type === 'modified') {
-            // Live player transition
-            if (player.status === 'LIVE' && (!prev || prev.status !== 'LIVE')) {
-              this.currentActivePlayerId = player.id;
-              this.emitLocal('livePlayerUpdated', player);
+    // Support multiple locations concurrently without wiping previous ones
+    if (this.subscribedLocations.has(locIdStr)) {
+      const activeInLoc = this.activePlayerByLocation.get(locIdStr);
+      if (activeInLoc && this.currentLivePlayer && this.currentLivePlayer.id === activeInLoc) {
+        this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
+      }
+      return;
+    }
+    this.subscribedLocations.add(locIdStr);
+
+    const locationUnsubs = [];
+
+    // 1. Authoritative Venue Document Listener (locations/{locationId})
+    try {
+      const locDocRef = doc(db, 'locations', locIdStr);
+      const unsubLoc = onSnapshot(
+        locDocRef,
+        async (docSnap) => {
+          if (!docSnap.exists()) return;
+          this.isFirestoreHealthy = true;
+          const locData = docSnap.data();
+
+          const currentActiveInLoc = this.activePlayerByLocation.get(locIdStr);
+          if (locData.activePlayerId && locData.activePlayerId !== currentActiveInLoc) {
+            this.activePlayerByLocation.set(locIdStr, locData.activePlayerId);
+            this.currentActivePlayerId = locData.activePlayerId;
+            try {
+              const pSnap = await getDoc(doc(db, 'players', locData.activePlayerId));
+              if (pSnap.exists()) {
+                const livePlayerData = {
+                  id: pSnap.id,
+                  locationId: locIdStr,
+                  ...pSnap.data(),
+                  timerDeadlineMs: locData.timerDeadlineMs,
+                  timerDurationSeconds: locData.timerDurationSeconds,
+                };
+                this.currentLivePlayer = livePlayerData;
+                this.emitLocal('livePlayerUpdated', livePlayerData);
+              }
+            } catch (err) {}
+          } else if (!locData.activePlayerId && currentActiveInLoc) {
+            this.activePlayerByLocation.delete(locIdStr);
+            if (this.currentActivePlayerId === currentActiveInLoc) {
+              this.currentActivePlayerId = null;
+              this.currentLivePlayer = null;
+            }
+            this.emitLocal('livePlayerCleared', { locationId: locIdStr });
+            this.emitLocal('livePlayerUpdated', { locationId: locIdStr, isCleared: true, player: null });
+          }
+
+          const prevLoc = this.previousLocationStates.get(locIdStr);
+          if (prevLoc) {
+            if (locData.isOnBreak !== prevLoc.isOnBreak) {
+              this.emitLocal('auctionBreakToggled', {
+                locationId: locIdStr,
+                show: locData.isOnBreak,
+              });
+            }
+            if (locData.leaderboardVisible !== prevLoc.leaderboardVisible) {
+              this.emitLocal('leaderboardToggled', locData.leaderboardVisible);
+            }
+            if (
+              locData.timerPaused !== prevLoc.timerPaused ||
+              locData.timerDeadlineMs !== prevLoc.timerDeadlineMs ||
+              locData.timerRemainingMs !== prevLoc.timerRemainingMs
+            ) {
+              this.emitLocal('timerUpdated', {
+                locationId: locIdStr,
+                deadlineMs: locData.timerDeadlineMs,
+                paused: Boolean(locData.timerPaused),
+                remainingMs: locData.timerRemainingMs,
+                durationSeconds: locData.timerDurationSeconds,
+              });
+            }
+          }
+          this.previousLocationStates.set(locIdStr, locData);
+        },
+        (error) => console.warn('[Firestore] Location snapshot warning:', error)
+      );
+      locationUnsubs.push(unsubLoc);
+    } catch (e) {}
+
+    // 2. Listen to Players collection for bids, sales, unsold in this location
+    try {
+      const playersQuery = query(
+        collection(db, 'players'),
+        where('locationId', '==', locIdStr)
+      );
+      const unsubPlayers = onSnapshot(
+        playersQuery,
+        (snapshot) => {
+          this.isFirestoreHealthy = true;
+          snapshot.docChanges().forEach((change) => {
+            const data = change.doc.data();
+            const player = { id: change.doc.id, locationId: data.locationId || locIdStr, ...data };
+            const prev = this.previousPlayerStates.get(player.id);
+
+            if (change.type === 'added' || change.type === 'modified') {
+              // Live player transition
+              if (player.status === 'LIVE' && (!prev || prev.status !== 'LIVE')) {
+                this.currentActivePlayerId = player.id;
+                this.currentLivePlayer = player;
+                this.activePlayerByLocation.set(locIdStr, player.id);
+                this.emitLocal('livePlayerUpdated', player);
+              }
+
+              // New bid placed
+              if (
+                player.currentBid &&
+                (!prev || prev.currentBid !== player.currentBid || prev.currentBidTeamId !== player.currentBidTeamId)
+              ) {
+                this.emitLocal('newBid', {
+                  playerId: player.id,
+                  teamId: player.currentBidTeamId,
+                  amount: player.currentBid,
+                  locationId: locIdStr,
+                });
+              }
+
+              // Player sold
+              if (player.status === 'SOLD' && (!prev || prev.status !== 'SOLD')) {
+                if (this.currentActivePlayerId === player.id) {
+                  this.currentActivePlayerId = null;
+                  this.currentLivePlayer = null;
+                  this.activePlayerByLocation.delete(locIdStr);
+                }
+                this.emitLocal('playerSold', player);
+              }
+
+              // Player unsold
+              if (player.status === 'UNSOLD' && (!prev || prev.status !== 'UNSOLD')) {
+                if (this.currentActivePlayerId === player.id) {
+                  this.currentActivePlayerId = null;
+                  this.currentLivePlayer = null;
+                  this.activePlayerByLocation.delete(locIdStr);
+                }
+                this.emitLocal('playerUnsold', player);
+              }
+
+              // Player reopened
+              if (
+                player.status === 'LIVE' &&
+                prev &&
+                (prev.status === 'SOLD' || prev.status === 'UNSOLD')
+              ) {
+                this.currentActivePlayerId = player.id;
+                this.currentLivePlayer = player;
+                this.activePlayerByLocation.set(locIdStr, player.id);
+                this.emitLocal('playerReopened', player);
+              }
             }
 
-            // New bid placed
+            this.previousPlayerStates.set(player.id, player);
+          });
+        },
+        (error) => console.warn('[Firestore] Players snapshot warning:', error)
+      );
+      locationUnsubs.push(unsubPlayers);
+    } catch (e) {}
+
+    // 3. Listen to Teams for penalties and budgets
+    try {
+      const teamsQuery = query(
+        collection(db, 'teams'),
+        where('locationId', '==', locIdStr)
+      );
+      const unsubTeams = onSnapshot(
+        teamsQuery,
+        (snapshot) => {
+          this.isFirestoreHealthy = true;
+          snapshot.docChanges().forEach((change) => {
+            const team = { id: change.doc.id, ...change.doc.data() };
+            const prev = this.previousTeamStates.get(team.id);
+
             if (
-              player.currentBid &&
-              (!prev || prev.currentBid !== player.currentBid || prev.currentBidTeamId !== player.currentBidTeamId)
+              prev &&
+              (team.mistakes !== prev.mistakes || team.isDisqualified !== prev.isDisqualified)
             ) {
-              this.emitLocal('newBid', {
-                playerId: player.id,
-                teamId: player.currentBidTeamId,
-                amount: player.currentBid,
-                locationId: locIdStr,
+              this.emitLocal('penaltyIssued', {
+                teamId: team.id,
+                mistakes: team.mistakes || 0,
+                isDisqualified: Boolean(team.isDisqualified),
               });
             }
 
-            // Player sold
-            if (player.status === 'SOLD' && (!prev || prev.status !== 'SOLD')) {
-              if (this.currentActivePlayerId === player.id) {
-                this.currentActivePlayerId = null;
-              }
-              this.emitLocal('playerSold', player);
-            }
+            this.previousTeamStates.set(team.id, team);
+          });
+        },
+        (error) => console.warn('[Firestore] Teams snapshot warning:', error)
+      );
+      locationUnsubs.push(unsubTeams);
+    } catch (e) {}
 
-            // Player unsold
-            if (player.status === 'UNSOLD' && (!prev || prev.status !== 'UNSOLD')) {
-              if (this.currentActivePlayerId === player.id) {
-                this.currentActivePlayerId = null;
-              }
-              this.emitLocal('playerUnsold', player);
-            }
-
-            // Player reopened
-            if (
-              player.status === 'LIVE' &&
-              prev &&
-              (prev.status === 'SOLD' || prev.status === 'UNSOLD')
-            ) {
-              this.currentActivePlayerId = player.id;
-              this.emitLocal('playerReopened', player);
-            }
-          }
-
-          this.previousPlayerStates.set(player.id, player);
-        });
-      },
-      (error) => console.warn('[Firestore] Players snapshot warning:', error)
-    );
-    this.activeUnsubscribers.push(unsubPlayers);
-
-    // 4. Listen to Teams for penalties and budget changes
-    const teamsQuery = query(
-      collection(db, 'teams'),
-      where('locationId', '==', locIdStr)
-    );
-    const unsubTeams = onSnapshot(
-      teamsQuery,
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const team = { id: change.doc.id, ...change.doc.data() };
-          const prev = this.previousTeamStates.get(team.id);
-
-          if (
-            prev &&
-            (team.mistakes !== prev.mistakes || team.isDisqualified !== prev.isDisqualified)
-          ) {
-            this.emitLocal('penaltyIssued', {
-              teamId: team.id,
-              mistakes: team.mistakes || 0,
-              isDisqualified: Boolean(team.isDisqualified),
-            });
-          }
-
-          this.previousTeamStates.set(team.id, team);
-        });
-      },
-      (error) => console.warn('[Firestore] Teams snapshot warning:', error)
-    );
-    this.activeUnsubscribers.push(unsubTeams);
-
-    // 5. Zero-Lag Fast-Heartbeat Poller (guarantees fast real-time update within 500ms)
-    const poller = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
-        if (!res.ok) return;
-        const all = await res.json();
-        const active = all.find((p) => p.status === 'LIVE');
-        if (active) {
-          const prev = this.previousPlayerStates.get(active.id);
-          if (
-            active.id !== this.currentActivePlayerId ||
-            !prev ||
-            prev.currentBid !== active.currentBid ||
-            prev.currentBidTeamId !== active.currentBidTeamId
-          ) {
-            this.currentActivePlayerId = active.id;
-            this.currentLivePlayer = { locationId: locIdStr, ...active };
-            this.previousPlayerStates.set(active.id, active);
-            this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
-          }
-        } else if (this.currentActivePlayerId) {
-          this.currentActivePlayerId = null;
-          this.currentLivePlayer = null;
-          this.emitLocal('livePlayerUpdated', null);
-        }
-      } catch (e) {}
-    }, 500);
-    this.activeUnsubscribers.push(() => clearInterval(poller));
-
-    // 6. SSE Real-time Stream Bridge (Guarantees immediate zero-config synchronization)
+    // 4. SSE Real-time Stream Bridge (Guarantees immediate zero-config synchronization)
     try {
       if (typeof window !== 'undefined' && window.EventSource) {
         const es = new EventSource(`${API_BASE}/api/events?locationId=${locIdStr}`);
-        
         const eventNames = [
           'livePlayerUpdated',
           'newBid',
@@ -443,17 +444,35 @@ class FirestoreAuctionRealtimeBridge {
                   locationId: data.locationId,
                 });
               }
-            } catch (err) {
-              console.warn('[SSE] Event parse warning:', err);
-            }
+            } catch (err) {}
           });
         });
 
-        this.activeUnsubscribers.push(() => es.close());
+        locationUnsubs.push(() => es.close());
       }
-    } catch (err) {
-      console.warn('[SSE] EventSource warning:', err);
-    }
+    } catch (err) {}
+
+    // 5. Throttled Smart Poller (runs ONLY if Firestore is offline, at a gentle 8s interval)
+    const poller = setInterval(async () => {
+      if (this.isFirestoreHealthy) return; // Do not poll when live Firestore is healthy!
+      try {
+        const res = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
+        if (!res.ok) return;
+        const all = await res.json();
+        const active = all.find((p) => p.status === 'LIVE');
+        if (active && active.id !== this.currentActivePlayerId) {
+          this.currentActivePlayerId = active.id;
+          this.currentLivePlayer = { locationId: locIdStr, ...active };
+          this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
+        } else if (!active && this.currentActivePlayerId) {
+          this.currentActivePlayerId = null;
+          this.currentLivePlayer = null;
+        }
+      } catch (e) {}
+    }, 8000);
+    locationUnsubs.push(() => clearInterval(poller));
+
+    this.locationUnsubscribers.set(locIdStr, locationUnsubs);
   }
 }
 

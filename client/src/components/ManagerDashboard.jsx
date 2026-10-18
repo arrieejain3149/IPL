@@ -46,10 +46,23 @@ export default function ManagerDashboard() {
       setFeedLog(prev => [{ id: Date.now() + Math.random(), msg: `[Global] New bid placed: ₹${data.amount / 10000000} Cr`, type: 'bid' }, ...prev].slice(0, 50));
     });
 
+    socket.on('livePlayerUpdated', (player) => {
+      if (player && player.name && !player.isCleared && player.status === 'LIVE') {
+        setFeedLog(prev => [{ id: Date.now() + Math.random(), msg: `[Global] 🎯 Lot Live: ${player.name} (${player.pool || ''})`, type: 'live' }, ...prev].slice(0, 50));
+      }
+    });
+
+    socket.on('auctionReset', () => {
+      setFeedLog(prev => [{ id: Date.now() + Math.random(), msg: `[Global] ⚡ Auction session reset`, type: 'reset' }, ...prev].slice(0, 50));
+      fetchData();
+    });
+
     return () => {
       socket.off('playerSold');
       socket.off('penaltyIssued');
       socket.off('newBid');
+      socket.off('livePlayerUpdated');
+      socket.off('auctionReset');
     };
   }, []);
 
@@ -65,6 +78,9 @@ export default function ManagerDashboard() {
       
       const locationsData = await locsRes.json();
       setLocations(locationsData);
+      if (Array.isArray(locationsData)) {
+        locationsData.forEach(loc => socket.emit('joinLocation', loc.id));
+      }
       
       const usersData = await usersRes.json();
       setUsers(usersData);
@@ -141,6 +157,32 @@ export default function ManagerDashboard() {
       }
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const handleResetAuction = async () => {
+    const locId = selectedLocation ? selectedLocation.id : (locations[0]?.id || 'main_arena');
+    const locName = selectedLocation ? selectedLocation.name : (locations[0]?.name || 'Mumbai');
+
+    if (!window.confirm(`Are you sure you want to RESET the auction for "${locName}"?\n\n• All players will return to UPCOMING status (retaining photos & points)\n• All franchise purses will restore back to ₹90.00 Cr\n• Active bids, timers, and lots will be cleared\n• Live viewers, auctioneer, and team dashboards will immediately sync to standby.`)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/api/auction/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locationId: locId, confirmText: 'RESET' })
+      });
+      if (res.ok) {
+        socket.emitLocal('auctionReset', { locationId: locId });
+        alert(`Auction session for "${locName}" has been successfully reset!`);
+        fetchData();
+      } else {
+        const err = await res.json();
+        alert(`Reset failed: ${err.error || 'Server error'}`);
+      }
+    } catch (error) {
+      console.error('Reset error:', error);
+      alert('Network error while resetting auction.');
     }
   };
 
@@ -1191,18 +1233,43 @@ export default function ManagerDashboard() {
 
         {/* DANGER ZONE TAB */}
         {activeTab === 'DANGER' && (
-          <div style={{ padding: '3rem', border: '1px solid var(--crimson-border)', background: 'rgba(239, 68, 68, 0.04)', borderRadius: '10px', textAlign: 'center' }}>
-            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.85rem', color: 'var(--crimson-danger)', letterSpacing: '0.2em', marginBottom: '1rem', fontWeight: '700' }}>
-              [CRITICAL ADMINISTRATIVE OVERRIDE]
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {/* 1. Recommended Safe Reset: Reset Auction Session */}
+            <div style={{ padding: '2.5rem', border: '1px solid var(--gold-border, rgba(212,175,55,0.4))', background: 'rgba(212, 175, 55, 0.05)', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.85rem', color: 'var(--gold-bright, #f0cc5d)', letterSpacing: '0.2em', marginBottom: '0.75rem', fontWeight: '700' }}>
+                [OPERATIONAL AUCTION RESET]
+              </div>
+              <h2 style={{ color: '#ffffff', marginBottom: '0.75rem', fontSize: '2rem', fontWeight: '900', fontFamily: 'Outfit, sans-serif' }}>
+                Reset Auction Session
+              </h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', maxWidth: '620px', margin: '0 auto 1.75rem auto', lineHeight: 1.6 }}>
+                Resets the active bidding session for <strong>{selectedLocation?.name || locations[0]?.name || 'Mumbai'}</strong>.
+                All 211 players return to <strong>UPCOMING</strong> status, bids are cleared, franchise purses restore to <strong>₹90.00 Cr</strong>, and all connected live panels sync back to standby.
+              </p>
+              <button 
+                onClick={handleResetAuction} 
+                className="btn btn-primary" 
+                style={{ fontSize: '0.95rem', padding: '0.85rem 2.5rem', fontWeight: '800', background: 'linear-gradient(135deg, #d4af37, #f0cc5d)', color: '#000' }}
+              >
+                ⚡ RESET AUCTION SESSION (RESTORE PURSES & LOTS)
+              </button>
             </div>
-            <h1 style={{ color: '#ffffff', marginBottom: '1rem', fontSize: '2.5rem', fontWeight: '900' }}>Database Reset Console</h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '1rem', maxWidth: '600px', margin: '0 auto 2rem auto', lineHeight: 1.6 }}>
-              This action will completely wipe the player database, erase all bids, and reset all franchise budgets back to ₹90.00 Crore. 
-              <strong> Venues, Teams, and Passwords will remain intact.</strong>
-            </p>
-            <button onClick={handleResetPlayers} className="btn btn-danger" style={{ fontSize: '1rem', padding: '1rem 3rem' }}>
-              WIPE PLAYER DATABASE & RESET ALL PURSES
-            </button>
+
+            {/* 2. Emergency Database Wipe */}
+            <div style={{ padding: '2.5rem', border: '1px solid var(--crimson-border)', background: 'rgba(239, 68, 68, 0.04)', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.82rem', color: 'var(--crimson-danger)', letterSpacing: '0.2em', marginBottom: '0.75rem', fontWeight: '700' }}>
+                [EMERGENCY DATABASE PURGE]
+              </div>
+              <h3 style={{ color: '#ffffff', marginBottom: '0.75rem', fontSize: '1.4rem', fontWeight: '800' }}>
+                Wipe Player Database
+              </h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', maxWidth: '550px', margin: '0 auto 1.5rem auto', lineHeight: 1.5 }}>
+                Irreversibly deletes all player profiles from the database. (Use only if completely re-importing player sheets).
+              </p>
+              <button onClick={handleResetPlayers} className="btn btn-danger" style={{ fontSize: '0.82rem', padding: '0.65rem 1.75rem' }}>
+                WIPE ALL PLAYERS PERMANENTLY
+              </button>
+            </div>
           </div>
         )}
 

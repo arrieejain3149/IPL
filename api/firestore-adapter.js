@@ -196,8 +196,8 @@ if (hasLiveCredentials) {
 
   loadStore();
 
-  // Auto-seed default store if empty
-  const defaultVenues = ['Mumbai', 'Delhi', 'Bangalore', 'Chennai'];
+  // Auto-seed default store if empty (1 single official arena)
+  const defaultVenues = ['Mumbai'];
   const defaultTeams = ['CSK', 'MI', 'RCB', 'DC', 'KKR', 'PBKS', 'RR', 'SRH', 'LSG', 'GT'];
 
   if (Object.keys(store.locations).length === 0) {

@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import './IntroOverlay.css';
 
 export default function IntroOverlay() {
-  const [stage, setStage] = useState('bouncing'); // 'bouncing' | 'exiting' | 'curtain' | 'finished'
+  const location = useLocation();
+  const [stage, setStage] = useState(() => {
+    if (location.pathname !== '/') return 'finished';
+    return 'bouncing';
+  });
 
   useEffect(() => {
+    if (location.pathname !== '/') return;
     let isCancelled = false;
 
     const runSequence = async () => {

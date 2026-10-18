@@ -59,3 +59,7 @@ ui-debug.log*
 # System & OS Files
 .DS_Store
 Thumbs.db
+
+# Local Exports & Data Dumps
+players_211.csv
+players_211.json
