@@ -284,6 +284,50 @@ app.post('/api/locations', async (req, res) => {
       });
     }
 
+    // Auto-create venue auctioneer user
+    const cleanVenueName = normalizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const auctioneerRef = db.collection('users').doc();
+    const auctioneerUsername = `auctioneer_${cleanVenueName}`;
+    batch.set(auctioneerRef, {
+      uid: auctioneerRef.id,
+      username: auctioneerUsername,
+      email: `${auctioneerUsername}@iplauction.local`,
+      role: 'AUCTIONEER',
+      locationId: locationRef.id,
+      isActive: true,
+      passwordFallback: 'password',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Auto-seed players to the new venue from base pool
+    const existingPlayersSnap = await db.collection('players').where('locationId', '==', 'main_arena').get();
+    existingPlayersSnap.forEach((doc) => {
+      const p = doc.data();
+      const playerRef = db.collection('players').doc();
+      batch.set(playerRef, {
+        name: p.name,
+        category: p.category,
+        basePrice: p.basePrice,
+        points: p.points,
+        pool: p.pool,
+        country: p.country,
+        imageUrl: p.imageUrl,
+        locationId: locationRef.id,
+        status: 'UPCOMING',
+        currentBid: null,
+        currentBidTeamId: null,
+        currentBidId: null,
+        soldPrice: null,
+        teamId: null,
+        order: p.order || null,
+        createdAt: now,
+        updatedAt: now,
+        timerDeadlineMs: null,
+        timerPaused: false,
+      });
+    });
+
     await batch.commit();
     res.json({ id: locationRef.id, name: normalizedName });
   } catch (err) {
@@ -827,6 +871,12 @@ app.post('/api/auction/reset', async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    // 4. Delete all bids in this location
+    const bidsSnap = await db.collection('bids').where('locationId', '==', locId).get();
+    bidsSnap.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+
     await batch.commit();
 
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
@@ -894,11 +944,6 @@ app.post('/api/bids', async (req, res) => {
         throw new Error(`Bid must exceed current price of ₹${(currentPrice / 10_000_000).toFixed(2)} Cr`);
       }
 
-      // Prevent a franchise from bidding against itself as current highest bidder
-      if (playerData.currentBidTeamId && String(playerData.currentBidTeamId) === String(teamId)) {
-        throw new Error('Your franchise currently holds the highest bid!');
-      }
-
       const bidRef = db.collection('bids').doc();
       const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -920,20 +965,6 @@ app.post('/api/bids', async (req, res) => {
         updatedAt: now,
       });
 
-      // 5. Timer Extension on Final Seconds (e.g. if under 10 seconds remaining, extend)
-      let updatedDeadline = locationData.timerDeadlineMs;
-      if (locationData.timerDeadlineMs) {
-        const remainingSeconds = Math.max(0, (locationData.timerDeadlineMs - nowMs) / 1000);
-        if (remainingSeconds < 10) {
-          updatedDeadline = nowMs + (Number(autoExtendSeconds) || 10) * 1000;
-          transaction.update(locationRef, {
-            timerDeadlineMs: updatedDeadline,
-            timerRemainingMs: updatedDeadline - nowMs,
-            updatedAt: now,
-          });
-        }
-      }
-
       return {
         bidId: bidRef.id,
         playerId,
@@ -941,20 +972,11 @@ app.post('/api/bids', async (req, res) => {
         teamName: teamData.name || teamData.shortName,
         amount: numAmount,
         locationId,
-        updatedDeadlineMs: updatedDeadline
       };
     });
 
     await logAuditEvent('NEW_BID', result, locationId);
     broadcastEvent(locationId, 'newBid', result);
-    if (result.updatedDeadlineMs) {
-      broadcastEvent(locationId, 'timerUpdated', {
-        locationId,
-        deadlineMs: result.updatedDeadlineMs,
-        paused: false,
-        remainingMs: Math.max(0, result.updatedDeadlineMs - Date.now())
-      });
-    }
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1181,6 +1203,12 @@ app.post('/api/auction/reverse-bid', async (req, res) => {
 
     await logAuditEvent('REVERSE_BID', result, locationId);
     broadcastEvent(locationId, 'bidReversed', result);
+    broadcastEvent(locationId, 'newBid', {
+      playerId: result.playerId,
+      teamId: result.previousTeamId,
+      amount: result.previousAmount,
+      locationId: result.locationId,
+    });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1355,7 +1383,7 @@ if (onRequest) {
 }
 
 // Run local server when called directly
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`[IPL Auction Backend] Firebase Express server running on port ${PORT}`);
