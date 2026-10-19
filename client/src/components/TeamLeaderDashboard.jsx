@@ -248,7 +248,13 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     };
 
     const onLivePlayerUpdated = (player) => {
-      setLivePlayer(player || null);
+      if (!player || player.isCleared || player.status === 'UPCOMING' || !player.id) {
+        setLivePlayer(null);
+        setTimerDeadline(null);
+        setTimerSecondsLeft(null);
+        return;
+      }
+      setLivePlayer(player);
       if (player?.timerDeadlineMs) {
         setTimerDeadline(player.timerDeadlineMs);
         setTimerSecondsLeft(Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)));
@@ -257,6 +263,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
         setTimerDeadline(null);
         setTimerSecondsLeft(null);
       }
+    };
+
+    const onLivePlayerCleared = () => {
+      setLivePlayer(null);
+      setTimerDeadline(null);
+      setTimerSecondsLeft(null);
     };
 
     const onTimerUpdated = (data) => {
@@ -316,6 +328,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     };
 
     const onAuctionReset = () => {
+      setAuctionStartingCountdown(null);
       setLivePlayer(null);
       setTimerDeadline(null);
       setTimerSecondsLeft(null);
@@ -339,6 +352,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     socket.on('penaltyIssued', onPenaltyIssued);
     socket.on('newBid', onNewBid);
     socket.on('livePlayerUpdated', onLivePlayerUpdated);
+    socket.on('livePlayerCleared', onLivePlayerCleared);
     socket.on('timerUpdated', onTimerUpdated);
     socket.on('playerUnsold', onPlayerUnsold);
     socket.on('auctionBreakToggled', onAuctionBreakToggled);
@@ -351,6 +365,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
       socket.off('penaltyIssued', onPenaltyIssued);
       socket.off('newBid', onNewBid);
       socket.off('livePlayerUpdated', onLivePlayerUpdated);
+      socket.off('livePlayerCleared', onLivePlayerCleared);
       socket.off('timerUpdated', onTimerUpdated);
       socket.off('playerUnsold', onPlayerUnsold);
       socket.off('auctionBreakToggled', onAuctionBreakToggled);

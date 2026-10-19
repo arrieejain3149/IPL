@@ -2108,5 +2108,95 @@
     "pool": "POOL-2 Bowler",
     "imageUrl": "/players/yuzi_chahal.png.png",
     "status": "UPCOMING"
+  },
+  {
+    "name": "AB de Villiers",
+    "category": "BATSMAN",
+    "country": "SA",
+    "basePrice": 20000000,
+    "points": 98,
+    "pool": "POOL-1 Batsman",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428043/ipl_auction/players/ab_devilliers.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Chris Gayle",
+    "category": "BATSMAN",
+    "country": "WI",
+    "basePrice": 20000000,
+    "points": 96,
+    "pool": "POOL-1 Batsman",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428044/ipl_auction/players/chris_gayle.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Suresh Raina",
+    "category": "BATSMAN",
+    "country": "IND",
+    "basePrice": 20000000,
+    "points": 95,
+    "pool": "POOL-1 Batsman",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428045/ipl_auction/players/suresh_raina.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Lasith Malinga",
+    "category": "BOWLER",
+    "country": "SL",
+    "basePrice": 20000000,
+    "points": 95,
+    "pool": "POOL-2 Bowler",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428047/ipl_auction/players/lasith_malinga.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Dwayne Bravo",
+    "category": "BOWLER",
+    "country": "WI",
+    "basePrice": 20000000,
+    "points": 98,
+    "pool": "POOL-2 Bowler",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428048/ipl_auction/players/dwayne_bravo.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Dale Steyn",
+    "category": "BOWLER",
+    "country": "SA",
+    "basePrice": 20000000,
+    "points": 96,
+    "pool": "POOL-2 Bowler",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428049/ipl_auction/players/dale_steyn.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Andre Russell",
+    "category": "ALL_ROUNDER",
+    "country": "WI",
+    "basePrice": 20000000,
+    "points": 95,
+    "pool": "POOL-3 All-Rounder",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428050/ipl_auction/players/andre_russell.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Kieron Pollard",
+    "category": "ALL_ROUNDER",
+    "country": "WI",
+    "basePrice": 20000000,
+    "points": 96,
+    "pool": "POOL-3 All-Rounder",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428052/ipl_auction/players/kieron_pollard.jpg",
+    "status": "UPCOMING"
+  },
+  {
+    "name": "Dinesh Karthik",
+    "category": "WICKET_KEEPER",
+    "country": "IND",
+    "basePrice": 20000000,
+    "points": 95,
+    "pool": "POOL-4 Wicket-Keeper",
+    "imageUrl": "https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428056/ipl_auction/players/dinesh_karthik.jpg",
+    "status": "UPCOMING"
   }
 ]

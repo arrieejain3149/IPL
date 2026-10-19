@@ -54,17 +54,26 @@ export default function LandingPage({ initialSection }) {
 
     // 4. Socket listeners for real-time instant propagation
     const handleLivePlayerUpdated = (player) => {
-      setLivePlayer(player || null);
+      if (!player || player.isCleared || player.status === 'UPCOMING' || !player.id) {
+        setLivePlayer(null);
+        setCurrentBid(null);
+        setTimerState({ deadlineMs: null, remainingSec: 0, paused: false });
+        return;
+      }
+      setLivePlayer(player);
       if (player && player.timerDeadlineMs) {
         setTimerState({
           deadlineMs: player.timerDeadlineMs,
           remainingSec: Math.max(0, Math.ceil((player.timerDeadlineMs - Date.now()) / 1000)),
           paused: false
         });
-      } else if (!player) {
-        setCurrentBid(null);
-        setTimerState({ deadlineMs: null, remainingSec: 0, paused: false });
       }
+    };
+
+    const handleLivePlayerCleared = () => {
+      setLivePlayer(null);
+      setCurrentBid(null);
+      setTimerState({ deadlineMs: null, remainingSec: 0, paused: false });
     };
 
     const handleNewBid = (bidData) => {
@@ -115,6 +124,7 @@ export default function LandingPage({ initialSection }) {
     };
 
     socket.on('livePlayerUpdated', handleLivePlayerUpdated);
+    socket.on('livePlayerCleared', handleLivePlayerCleared);
     socket.on('newBid', handleNewBid);
     socket.on('timerUpdated', handleTimerUpdated);
     socket.on('playerSold', handlePlayerSold);
@@ -124,6 +134,7 @@ export default function LandingPage({ initialSection }) {
 
     return () => {
       socket.off('livePlayerUpdated', handleLivePlayerUpdated);
+      socket.off('livePlayerCleared', handleLivePlayerCleared);
       socket.off('newBid', handleNewBid);
       socket.off('timerUpdated', handleTimerUpdated);
       socket.off('playerSold', handlePlayerSold);

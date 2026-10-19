@@ -963,6 +963,15 @@ app.post('/api/auction/reset', async (req, res) => {
 
     invalidateCache();
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
+    broadcastEvent(locId, 'livePlayerCleared', { locationId: locId });
+    broadcastEvent(locId, 'livePlayerUpdated', null);
+    broadcastEvent(locId, 'timerUpdated', {
+      locationId: locId,
+      deadlineMs: null,
+      paused: false,
+      remainingMs: null,
+      durationSeconds: 30
+    });
     await logAuditEvent('AUCTION_RESET', { locationId: locId }, locId);
     res.json({ success: true, message: 'Auction reset successfully for location: ' + locId });
   } catch (err) {

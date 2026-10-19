@@ -387,6 +387,7 @@ export default function ViewerDashboard() {
     });
 
     socket.on('auctionReset', (data) => {
+      setAuctionStartingCountdown(null);
       const locId = data?.locationId || selectedLocationId || locations[0]?.id || '1';
       setLivePlayers(prev => ({ ...prev, [locId]: null }));
       setCurrentBids(prev => {

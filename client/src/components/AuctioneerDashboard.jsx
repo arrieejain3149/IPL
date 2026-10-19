@@ -45,17 +45,27 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const [playerHistory, setPlayerHistory] = useState([]);
   const [auctionStartingCountdown, setAuctionStartingCountdown] = useState(null);
   const isResolvingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Synchronized 5-Second Global Countdown effect
   useEffect(() => {
     if (auctionStartingCountdown === null) return;
     if (auctionStartingCountdown > 0) {
       const timer = setTimeout(() => {
+        if (!isMountedRef.current) return;
         setAuctionStartingCountdown(prev => (prev > 0 ? prev - 1 : 0));
       }, 1000);
       return () => clearTimeout(timer);
     } else if (auctionStartingCountdown === 0) {
       const timer = setTimeout(() => {
+        if (!isMountedRef.current) return;
         setAuctionStartingCountdown(null);
         // Commence auction with the first player lot
         advanceNextPlayer();
@@ -170,6 +180,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       if (res.ok) {
         setShowResetModal(false);
         setResetConfirmInput('');
+        setAuctionStartingCountdown(null);
         setAutoAdvanceCountdown(null);
         isResolvingRef.current = false;
         setAutoPilotEnabled(false);
@@ -183,6 +194,8 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         setTimerDeadline(null);
         setTimerSecondsLeft(null);
         fetchTeams();
+        socket.emitLocal('livePlayerCleared', { locationId: selectedLocation });
+        socket.emitLocal('livePlayerUpdated', null);
         alert('Auction reset completed successfully.');
       }
     } catch (err) {
@@ -253,12 +266,14 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     if (autoAdvanceCountdown === null) return;
     if (autoAdvanceCountdown > 0) {
       const timerId = setTimeout(() => {
+        if (!isMountedRef.current) return;
         setAutoAdvanceCountdown(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
       }, 1000);
       return () => clearTimeout(timerId);
     } else if (autoAdvanceCountdown === 0) {
       setAutoAdvanceCountdown(null);
       isResolvingRef.current = false;
+      if (!isMountedRef.current) return;
       
       // Look for next pending player in the filtered slot
       const remainingInSlot = players.filter(p => 
@@ -276,7 +291,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   }, [autoAdvanceCountdown, players, poolFilter, livePlayer]);
 
   const advanceNextPlayer = async (targetId) => {
-    if (!selectedLocation) return;
+    if (!isMountedRef.current || !selectedLocation) return;
     try {
       // Record current live player into player history before advancing
       if (livePlayer && (!playerHistory.length || playerHistory[playerHistory.length - 1].id !== livePlayer.id)) {
@@ -461,6 +476,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       });
 
       socket.on('auctionReset', () => {
+        setAuctionStartingCountdown(null);
         setAutoAdvanceCountdown(null);
         isResolvingRef.current = false;
         setAutoPilotEnabled(false);
@@ -488,6 +504,9 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       });
 
       return () => {
+        setAuctionStartingCountdown(null);
+        setAutoAdvanceCountdown(null);
+        isResolvingRef.current = false;
         socket.off('playerSold');
         socket.off('penaltyIssued');
         socket.off('playerReopened');

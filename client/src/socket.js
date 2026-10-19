@@ -46,10 +46,16 @@ class FirestoreAuctionRealtimeBridge {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event).add(callback);
-    if (event === 'livePlayerUpdated' && this.currentLivePlayer) {
-      try {
-        callback(this.currentLivePlayer);
-      } catch (err) {}
+    if (event === 'livePlayerUpdated') {
+      if (this.currentLivePlayer && this.currentLivePlayer.status === 'LIVE' && !this.currentLivePlayer.isCleared && this.currentLivePlayer.id) {
+        try {
+          callback(this.currentLivePlayer);
+        } catch (err) {}
+      } else {
+        try {
+          callback(null);
+        } catch (err) {}
+      }
     }
     return this;
   }
@@ -66,6 +72,19 @@ class FirestoreAuctionRealtimeBridge {
   }
 
   emitLocal(event, data) {
+    if (event === 'auctionReset') {
+      this.currentActivePlayerId = null;
+      this.currentLivePlayer = null;
+      this.activePlayerByLocation.clear();
+      this.previousPlayerStates.clear();
+      this.previousLocationStates.clear();
+    } else if (event === 'livePlayerCleared') {
+      if (data?.locationId) {
+        this.activePlayerByLocation.delete(String(data.locationId));
+      }
+      this.currentActivePlayerId = null;
+      this.currentLivePlayer = null;
+    }
     const callbacks = this.listeners.get(event);
     if (callbacks) {
       callbacks.forEach((cb) => {
@@ -181,11 +200,11 @@ class FirestoreAuctionRealtimeBridge {
         (snapshot) => {
           this.isFirestoreHealthy = true;
           if (snapshot.empty) {
-            if (this.currentActivePlayerId || this.currentLivePlayer) {
-              this.currentActivePlayerId = null;
-              this.currentLivePlayer = null;
-              this.emitLocal('livePlayerUpdated', null);
-            }
+            this.currentActivePlayerId = null;
+            this.currentLivePlayer = null;
+            this.activePlayerByLocation.clear();
+            this.emitLocal('livePlayerCleared', { locationId: 'main_arena' });
+            this.emitLocal('livePlayerUpdated', null);
             return;
           }
           snapshot.docChanges().forEach((change) => {
@@ -259,14 +278,14 @@ class FirestoreAuctionRealtimeBridge {
                 this.emitLocal('livePlayerUpdated', livePlayerData);
               }
             } catch (err) {}
-          } else if (!locData.activePlayerId && currentActiveInLoc) {
+          } else if (!locData.activePlayerId) {
             this.activePlayerByLocation.delete(locIdStr);
-            if (this.currentActivePlayerId === currentActiveInLoc) {
+            if (this.currentActivePlayerId === currentActiveInLoc || !this.currentActivePlayerId) {
               this.currentActivePlayerId = null;
               this.currentLivePlayer = null;
             }
             this.emitLocal('livePlayerCleared', { locationId: locIdStr });
-            this.emitLocal('livePlayerUpdated', { locationId: locIdStr, isCleared: true, player: null });
+            this.emitLocal('livePlayerUpdated', null);
           }
 
           const prevLoc = this.previousLocationStates.get(locIdStr);
@@ -435,6 +454,17 @@ class FirestoreAuctionRealtimeBridge {
           es.addEventListener(evName, (e) => {
             try {
               const data = JSON.parse(e.data);
+              if (evName === 'auctionReset') {
+                this.currentActivePlayerId = null;
+                this.currentLivePlayer = null;
+                this.activePlayerByLocation.clear();
+                this.previousPlayerStates.clear();
+                this.previousLocationStates.clear();
+                this.emitLocal('auctionReset', data);
+                this.emitLocal('livePlayerCleared', { locationId: data?.locationId || locIdStr });
+                this.emitLocal('livePlayerUpdated', null);
+                return;
+              }
               this.emitLocal(evName, data);
               if (evName === 'bidReversed') {
                 this.emitLocal('newBid', {
