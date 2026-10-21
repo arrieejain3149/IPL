@@ -23,6 +23,13 @@ export default function ViewerDashboard() {
   const currentPoolsRef = useRef({});
   const lastAudioPlayRef = useRef(0);
 
+  const getAvatar = (name, url) => {
+    const clean = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (url && !url.includes('ui-avatars.com')) return url;
+    if (playerImageMap[clean] && !playerImageMap[clean].includes('ui-avatars.com')) return playerImageMap[clean];
+    return `/players/${(name || '').toLowerCase().replace(/ /g, '_')}.png`;
+  };
+
   // 5-Second Global Auction Starting Countdown ticker
   useEffect(() => {
     if (auctionStartingCountdown === null) return;
@@ -652,10 +659,22 @@ export default function ViewerDashboard() {
                     flexShrink: 0
                   }}>
                     <img
-                      src={livePlayer.imageUrl || playerImageMap[livePlayer.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(livePlayer.name || '').toLowerCase().replace(/ /g, '_')}.png`}
+                      src={getAvatar(livePlayer.name, livePlayer.imageUrl)}
                       alt={livePlayer.name}
                       style={{ width: '85%', height: '85%', objectFit: 'contain' }}
-                      onError={e => { e.target.style.display = 'none'; }}
+                      onError={(e) => {
+                        const clean = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                        if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                          e.currentTarget.src = playerImageMap[clean];
+                        } else {
+                          const fallbackJpeg = `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                          if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                            e.currentTarget.src = fallbackJpeg;
+                          } else {
+                            e.currentTarget.style.display = 'none';
+                          }
+                        }
+                      }}
                     />
                   </div>
                   <div>
@@ -1110,7 +1129,7 @@ export default function ViewerDashboard() {
 
             {/* Player Cutout Image - Substantially enlarged & heroic standing */}
             <img 
-              src={player.imageUrl || playerImageMap[player.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(player.name || '').toLowerCase().replace(/ /g, '_')}.png`} 
+              src={getAvatar(player.name, player.imageUrl)} 
               alt={player.name} 
               style={{ 
                 position: 'absolute',
@@ -1126,7 +1145,17 @@ export default function ViewerDashboard() {
                 filter: 'drop-shadow(0 20px 45px rgba(0, 0, 0, 0.98)) drop-shadow(0 0 50px rgba(37, 99, 235, 0.25))'
               }}
               onError={(e) => {
-                e.target.style.display = 'none';
+                const clean = (player?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                  e.currentTarget.src = playerImageMap[clean];
+                } else {
+                  const fallbackJpeg = `/players/${(player?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                  if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                    e.currentTarget.src = fallbackJpeg;
+                  } else {
+                    e.currentTarget.style.display = 'none';
+                  }
+                }
               }}
             />
 
@@ -1466,10 +1495,22 @@ export default function ViewerDashboard() {
                       flexShrink: 0
                     }}>
                       <img
-                        src={buy.imageUrl || playerImageMap[buy.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(buy.name || '').toLowerCase().replace(/ /g, '_')}.png`}
+                        src={getAvatar(buy.name, buy.imageUrl)}
                         alt={buy.name}
                         style={{ width: '85%', height: '85%', objectFit: 'contain' }}
-                        onError={e => { e.target.style.display = 'none'; }}
+                        onError={(e) => {
+                          const clean = (buy?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                          if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                            e.currentTarget.src = playerImageMap[clean];
+                          } else {
+                            const fallbackJpeg = `/players/${(buy?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                            if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                              e.currentTarget.src = fallbackJpeg;
+                            } else {
+                              e.currentTarget.style.display = 'none';
+                            }
+                          }
+                        }}
                       />
                     </div>
                     <div>

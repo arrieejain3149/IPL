@@ -220,18 +220,22 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
       }, ...prev].slice(0, 50));
     };
 
-    const onPenaltyIssued = () => {
+    const onPenaltyIssued = (data) => {
       fetch(API_URL + '/api/teams')
         .then(r => r.ok ? r.json() : [])
-        .then(data => {
-          if (!Array.isArray(data)) return;
-          const updated = data.find(t => String(t.id) === String(teamData.id));
+        .then(dataList => {
+          if (!Array.isArray(dataList)) return;
+          const updated = dataList.find(t => String(t.id) === String(teamData.id));
           if (updated) setTeamData(updated);
         })
         .catch(console.warn);
+
+      const isDisq = data?.isDisqualified || (data?.mistakes >= 3);
+      const breachText = data?.reason || 'Disciplinary violation recorded';
+
       setFeedLog(prev => [{ 
         id: Date.now() + Math.random(), 
-        msg: `Penalty warning recorded against franchise`, 
+        msg: isDisq ? `🚨 DISQUALIFICATION ISSUED: ${breachText}` : `Penalty warning recorded against franchise: ${breachText}`, 
         type: 'penalty',
         time: new Date().toLocaleTimeString()
       }, ...prev].slice(0, 50));
@@ -420,14 +424,40 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
   const bowlerCount = players.filter(p => p.category === 'BOWLER').length;
   const allRounderCount = players.filter(p => p.category === 'ALL_ROUNDER').length;
   const wkCount = players.filter(p => p.category === 'WICKET_KEEPER').length;
-  const overseasCount = players.filter(p => p.country && p.country.toUpperCase() !== 'IND' && p.country.toUpperCase() !== 'INDIA').length;
+  const isPlayerOverseas = (p) => {
+    if (!p) return false;
+    if (p.isOverseas !== undefined) return Boolean(p.isOverseas);
+    const country = (p.country || '').trim().toUpperCase();
+    return country !== '' && country !== 'IND' && country !== 'INDIA';
+  };
+  const overseasCount = players.filter(p => isPlayerOverseas(p)).length;
   const budgetCr = (teamData.budget / 10000000).toFixed(2);
   const mistakes = teamData.mistakes || 0;
 
+  const getTeamQuotaBreach = (squad) => {
+    if (!Array.isArray(squad)) return null;
+    if (squad.length > 12) return `EXCEEDED 12 ROSTER LIMIT (${squad.length}/12 Players)`;
+    const bat = squad.filter(p => p.category === 'BATSMAN').length;
+    if (bat > 4) return `EXCEEDED 4 BATSMEN QUOTA (${bat}/4 Batsmen)`;
+    const bowl = squad.filter(p => p.category === 'BOWLER').length;
+    if (bowl > 4) return `EXCEEDED 4 BOWLERS QUOTA (${bowl}/4 Bowlers)`;
+    const wk = squad.filter(p => p.category === 'WICKET_KEEPER').length;
+    if (wk > 1) return `EXCEEDED 1 WICKETKEEPER QUOTA (${wk}/1 Wicketkeeper)`;
+    const ar = squad.filter(p => p.category === 'ALL_ROUNDER').length;
+    if (ar > 3) return `EXCEEDED 3 ALL-ROUNDERS QUOTA (${ar}/3 All-rounders)`;
+    const os = squad.filter(p => isPlayerOverseas(p)).length;
+    if (os > 4) return `EXCEEDED 4 OVERSEAS PLAYERS QUOTA (${os}/4 Overseas)`;
+    return null;
+  };
+
+  const myQuotaBreach = getTeamQuotaBreach(players);
+  const isMyTeamDisqualified = Boolean(teamData.isDisqualified || myQuotaBreach);
+  const myDisqualificationReason = teamData.disqualificationReason || myQuotaBreach || (mistakes >= 3 ? '3 DISCIPLINARY WARNINGS' : 'DIRECT DISQUALIFICATION (QUOTA BREACH)');
+
   const getAvatar = (name, url) => {
-    if (url) return url;
     const clean = (name || '').toLowerCase().replace(/[^a-z]/g, '');
-    if (playerImageMap[clean]) return playerImageMap[clean];
+    if (url && !url.includes('ui-avatars.com')) return url;
+    if (playerImageMap[clean] && !playerImageMap[clean].includes('ui-avatars.com')) return playerImageMap[clean];
     return `/players/${(name || '').toLowerCase().replace(/ /g, '_')}.png`;
   };
 
@@ -468,19 +498,25 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
               {sortedTeams.map((t, index) => {
                 const pts = (t.players || []).reduce((sum, p) => sum + p.points, 0);
                 const isMyTeam = t.id === teamData.id;
+                const tBreach = getTeamQuotaBreach(t.players || []);
+                const isTDisq = Boolean(t.isDisqualified || tBreach);
                 return (
-                  <tr key={t.id} style={{ background: isMyTeam ? 'rgba(212, 175, 55, 0.15)' : 'transparent' }}>
-                    <td style={{ fontWeight: '800', fontFamily: 'JetBrains Mono, monospace', color: index === 0 ? '#FAAE1A' : '#91A6BE' }}>
+                  <tr key={t.id} style={{ background: isMyTeam ? 'rgba(212, 175, 55, 0.15)' : (isTDisq ? 'rgba(235, 87, 87, 0.08)' : 'transparent') }}>
+                    <td style={{ fontWeight: '800', fontFamily: 'JetBrains Mono, monospace', color: isTDisq ? '#EB5757' : (index === 0 ? '#FAAE1A' : '#91A6BE') }}>
                       #{index + 1}
                     </td>
-                    <td style={{ fontWeight: '700', color: isMyTeam ? '#FAAE1A' : '#ffffff' }}>
-                      {t.name} {isMyTeam && <span className="badge badge-gold" style={{ marginLeft: '0.5rem', fontSize: '0.65rem' }}>YOUR TEAM</span>}
+                    <td style={{ fontWeight: '700', color: isTDisq ? '#EB5757' : (isMyTeam ? '#FAAE1A' : '#ffffff'), textDecoration: isTDisq ? 'line-through' : 'none' }}>
+                      {t.name} 
+                      {isMyTeam && <span className="badge badge-gold" style={{ marginLeft: '0.5rem', fontSize: '0.65rem' }}>YOUR TEAM</span>}
+                      {isTDisq && <span className="badge badge-danger" style={{ marginLeft: '0.5rem', fontSize: '0.65rem', background: 'rgba(235, 87, 87, 0.25)', color: '#EB5757', border: '1px solid #EB5757' }}>DISQUALIFIED</span>}
                     </td>
-                    <td style={{ fontFamily: 'JetBrains Mono, monospace' }}>{(t.players || []).length} / 15</td>
-                    <td style={{ color: '#FAAE1A', fontWeight: '700', fontFamily: 'JetBrains Mono, monospace' }}>
+                    <td style={{ fontFamily: 'JetBrains Mono, monospace', color: isTDisq ? '#EB5757' : 'inherit' }}>
+                      {(t.players || []).length} / 12 {tBreach ? `(${tBreach})` : ''}
+                    </td>
+                    <td style={{ color: isTDisq ? '#EB5757' : '#FAAE1A', fontWeight: '700', fontFamily: 'JetBrains Mono, monospace' }}>
                       ₹{(t.budget / 10000000).toFixed(2)} Cr
                     </td>
-                    <td style={{ fontWeight: '800', color: '#10B981', fontSize: '1.1rem', fontFamily: 'JetBrains Mono, monospace' }}>
+                    <td style={{ fontWeight: '800', color: isTDisq ? '#EB5757' : '#10B981', fontSize: '1.1rem', fontFamily: 'JetBrains Mono, monospace' }}>
                       {pts}
                     </td>
                   </tr>
@@ -608,10 +644,10 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                   <h2 className={styles.pbDeskTitle}>{teamData.name}</h2>
                 </div>
 
-                {teamData.isDisqualified ? (
+                {isMyTeamDisqualified ? (
                   <div style={{ 
-                    background: 'rgba(235, 87, 87, 0.15)', 
-                    border: '1px solid rgba(235, 87, 87, 0.4)', 
+                    background: 'rgba(235, 87, 87, 0.2)', 
+                    border: '1px solid #EB5757', 
                     padding: '0.85rem', 
                     borderRadius: '6px', 
                     marginBottom: '1rem', 
@@ -619,11 +655,12 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                     fontWeight: '800', 
                     textAlign: 'center', 
                     textTransform: 'uppercase', 
-                    letterSpacing: '0.1em',
+                    letterSpacing: '0.08em',
                     fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: '0.8rem'
+                    fontSize: '0.8rem',
+                    boxShadow: '0 0 15px rgba(235, 87, 87, 0.25)'
                   }}>
-                    DISQUALIFIED (3 WARNINGS)
+                    🚨 DISQUALIFIED: {myDisqualificationReason}
                   </div>
                 ) : (
                   <div className={styles.pbInfractionsRow}>
@@ -639,33 +676,33 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                 <div className={styles.pbQuotaCard}>
                   <div className={styles.pbQuotaTitle}>MANDATORY QUOTA TRACKER</div>
                   <div className={styles.pbQuotaGrid}>
-                    <div className={`${styles.pbQuotaItem} ${batsmenCount >= 3 ? styles.pbQuotaComplete : ''}`}>
+                    <div className={`${styles.pbQuotaItem} ${batsmenCount > 4 ? styles.pbInfractionsValDanger : batsmenCount === 4 ? styles.pbQuotaComplete : ''}`} style={batsmenCount > 4 ? { borderColor: '#EB5757', background: 'rgba(235,87,87,0.15)', color: '#EB5757' } : {}}>
                       <span>BAT:</span>
-                      <span>{batsmenCount}/3</span>
+                      <span>{batsmenCount}/4 {batsmenCount > 4 ? '⚠️' : ''}</span>
                     </div>
-                    <div className={`${styles.pbQuotaItem} ${bowlerCount >= 3 ? styles.pbQuotaComplete : ''}`}>
+                    <div className={`${styles.pbQuotaItem} ${bowlerCount > 4 ? styles.pbInfractionsValDanger : bowlerCount === 4 ? styles.pbQuotaComplete : ''}`} style={bowlerCount > 4 ? { borderColor: '#EB5757', background: 'rgba(235,87,87,0.15)', color: '#EB5757' } : {}}>
                       <span>BOWL:</span>
-                      <span>{bowlerCount}/3</span>
+                      <span>{bowlerCount}/4 {bowlerCount > 4 ? '⚠️' : ''}</span>
                     </div>
-                    <div className={`${styles.pbQuotaItem} ${allRounderCount >= 2 ? styles.pbQuotaComplete : ''}`}>
+                    <div className={`${styles.pbQuotaItem} ${allRounderCount > 3 ? styles.pbInfractionsValDanger : allRounderCount === 3 ? styles.pbQuotaComplete : ''}`} style={allRounderCount > 3 ? { borderColor: '#EB5757', background: 'rgba(235,87,87,0.15)', color: '#EB5757' } : {}}>
                       <span>AR:</span>
-                      <span>{allRounderCount}/2</span>
+                      <span>{allRounderCount}/3 {allRounderCount > 3 ? '⚠️' : ''}</span>
                     </div>
-                    <div className={`${styles.pbQuotaItem} ${wkCount >= 1 ? styles.pbQuotaComplete : ''}`}>
+                    <div className={`${styles.pbQuotaItem} ${wkCount > 1 ? styles.pbInfractionsValDanger : wkCount === 1 ? styles.pbQuotaComplete : ''}`} style={wkCount > 1 ? { borderColor: '#EB5757', background: 'rgba(235,87,87,0.15)', color: '#EB5757' } : {}}>
                       <span>WK:</span>
-                      <span>{wkCount}/1</span>
+                      <span>{wkCount}/1 {wkCount > 1 ? '⚠️' : ''}</span>
                     </div>
-                    <div className={`${styles.pbQuotaItem} ${styles.pbQuotaOverseas} ${overseasCount <= 4 ? '' : styles.pbInfractionsValDanger}`}>
+                    <div className={`${styles.pbQuotaItem} ${styles.pbQuotaOverseas} ${overseasCount <= 4 ? '' : styles.pbInfractionsValDanger}`} style={overseasCount > 4 ? { borderColor: '#EB5757', background: 'rgba(235,87,87,0.15)', color: '#EB5757' } : {}}>
                       <span>OVERSEAS:</span>
-                      <span>{overseasCount}/4 MAX</span>
+                      <span>{overseasCount}/4 MAX {overseasCount > 4 ? '⚠️' : ''}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className={styles.pbRosterRow}>
-                  <span className={styles.pbRosterLabel}>TOTAL PLAYERS</span>
-                  <span className={styles.pbRosterVal}>
-                    {players.length} <span className={styles.pbRosterMax}>/ 15</span>
+                <div className={styles.pbRosterRow} style={players.length > 12 ? { border: '1px solid #EB5757', background: 'rgba(235,87,87,0.15)', borderRadius: '4px', padding: '0.4rem 0.5rem' } : {}}>
+                  <span className={styles.pbRosterLabel} style={players.length > 12 ? { color: '#EB5757' } : {}}>TOTAL PLAYERS</span>
+                  <span className={styles.pbRosterVal} style={players.length > 12 ? { color: '#EB5757' } : {}}>
+                    {players.length} <span className={styles.pbRosterMax}>/ 12</span> {players.length > 12 ? '⚠️' : ''}
                   </span>
                 </div>
 
@@ -766,7 +803,19 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                           className={styles.pbPlayerAvatarImg}
                           src={getAvatar(livePlayer.name, livePlayer.imageUrl)} 
                           alt={livePlayer.name} 
-                          onError={(e) => { e.target.style.display = 'none'; }} 
+                          onError={(e) => {
+                            const clean = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                            if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                              e.currentTarget.src = playerImageMap[clean];
+                            } else {
+                              const fallbackJpeg = `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                              if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                                e.currentTarget.src = fallbackJpeg;
+                              } else {
+                                e.currentTarget.style.display = 'none';
+                              }
+                            }
+                          }} 
                         />
                       </div>
 
@@ -897,7 +946,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
               <div className={styles.pbSquadModalBox} onClick={e => e.stopPropagation()}>
                 <div className={styles.pbSquadModalHeader}>
                   <span className={styles.pbSquadModalTitle}>
-                    {theme.name} Official Roster ({players.length}/15)
+                    {theme.name} Official Roster ({players.length}/12)
                   </span>
                   <button 
                     type="button"
@@ -969,22 +1018,23 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                 </h2>
               </div>
               
-              {teamData.isDisqualified ? (
+              {isMyTeamDisqualified ? (
                 <div style={{ 
-                  background: 'var(--crimson-surface)', 
-                  border: '1px solid var(--crimson-border)', 
+                  background: 'rgba(235, 87, 87, 0.2)', 
+                  border: '1px solid #EB5757', 
                   padding: '0.85rem', 
                   borderRadius: '6px', 
                   marginBottom: '1rem', 
-                  color: 'var(--crimson-danger)', 
+                  color: '#EB5757', 
                   fontWeight: '800', 
                   textAlign: 'center', 
                   textTransform: 'uppercase', 
-                  letterSpacing: '0.1em',
+                  letterSpacing: '0.08em',
                   fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: '0.8rem'
+                  fontSize: '0.8rem',
+                  boxShadow: '0 0 15px rgba(235, 87, 87, 0.25)'
                 }}>
-                  DISQUALIFIED (3 WARNINGS)
+                  🚨 DISQUALIFIED: {myDisqualificationReason}
                 </div>
               ) : (
                 <div style={{ 
@@ -1024,30 +1074,30 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                     MANDATORY QUOTA TRACKER
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.8rem', fontFamily: 'JetBrains Mono, monospace' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: batsmenCount >= 3 ? 'var(--emerald-live)' : 'var(--text-secondary)' }}>
-                      <span>BAT:</span> <span>{batsmenCount}/3</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: batsmenCount > 4 ? '#EB5757' : (batsmenCount === 4 ? 'var(--emerald-live)' : 'var(--text-secondary)') }}>
+                      <span>BAT:</span> <span>{batsmenCount}/4 {batsmenCount > 4 ? '⚠️' : ''}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: bowlerCount >= 3 ? 'var(--emerald-live)' : 'var(--text-secondary)' }}>
-                      <span>BOWL:</span> <span>{bowlerCount}/3</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: bowlerCount > 4 ? '#EB5757' : (bowlerCount === 4 ? 'var(--emerald-live)' : 'var(--text-secondary)') }}>
+                      <span>BOWL:</span> <span>{bowlerCount}/4 {bowlerCount > 4 ? '⚠️' : ''}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: allRounderCount >= 2 ? 'var(--emerald-live)' : 'var(--text-secondary)' }}>
-                      <span>AR:</span> <span>{allRounderCount}/2</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: allRounderCount > 3 ? '#EB5757' : (allRounderCount === 3 ? 'var(--emerald-live)' : 'var(--text-secondary)') }}>
+                      <span>AR:</span> <span>{allRounderCount}/3 {allRounderCount > 3 ? '⚠️' : ''}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: wkCount >= 1 ? 'var(--emerald-live)' : 'var(--text-secondary)' }}>
-                      <span>WK:</span> <span>{wkCount}/1</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: wkCount > 1 ? '#EB5757' : (wkCount === 1 ? 'var(--emerald-live)' : 'var(--text-secondary)') }}>
+                      <span>WK:</span> <span>{wkCount}/1 {wkCount > 1 ? '⚠️' : ''}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2', color: overseasCount <= 4 ? 'var(--text-secondary)' : 'var(--crimson-danger)', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '0.4rem', marginTop: '0.2rem' }}>
-                      <span>OVERSEAS:</span> <span>{overseasCount}/4 MAX</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2', color: overseasCount <= 4 ? 'var(--text-secondary)' : '#EB5757', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '0.4rem', marginTop: '0.2rem' }}>
+                      <span>OVERSEAS:</span> <span>{overseasCount}/4 MAX {overseasCount > 4 ? '⚠️' : ''}</span>
                     </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'JetBrains Mono, monospace' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', padding: players.length > 12 ? '0.35rem 0.5rem' : '0', border: players.length > 12 ? '1px solid #EB5757' : 'none', borderRadius: '4px', background: players.length > 12 ? 'rgba(235,87,87,0.15)' : 'transparent' }}>
+                  <span style={{ fontSize: '0.75rem', color: players.length > 12 ? '#EB5757' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'JetBrains Mono, monospace' }}>
                     TOTAL PLAYERS
                   </span>
-                  <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#ffffff', fontFamily: 'JetBrains Mono, monospace' }}>
-                    {players.length} <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>/ 15</span>
+                  <span style={{ fontSize: '0.9rem', fontWeight: '800', color: players.length > 12 ? '#EB5757' : '#ffffff', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {players.length} <span style={{ color: players.length > 12 ? '#EB5757' : 'var(--text-dim)', fontSize: '0.75rem' }}>/ 12</span> {players.length > 12 ? '⚠️' : ''}
                   </span>
                 </div>
                 
@@ -1191,7 +1241,19 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                         src={getAvatar(livePlayer.name, livePlayer.imageUrl)} 
                         alt={livePlayer.name} 
                         style={{ height: '90%', objectFit: 'contain' }} 
-                        onError={(e) => { e.target.style.display = 'none'; }} 
+                        onError={(e) => {
+                          const clean = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                          if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                            e.currentTarget.src = playerImageMap[clean];
+                          } else {
+                            const fallbackJpeg = `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                            if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                              e.currentTarget.src = fallbackJpeg;
+                            } else {
+                              e.currentTarget.style.display = 'none';
+                            }
+                          }
+                        }} 
                       />
                     </div>
 

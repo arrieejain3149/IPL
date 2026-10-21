@@ -565,7 +565,14 @@ export default function ManagerDashboard() {
                   <td style={{ fontWeight: '800', fontFamily: 'JetBrains Mono, monospace', color: index === 0 ? 'var(--gold-bright)' : 'var(--text-secondary)' }}>
                     #{index + 1}
                   </td>
-                  <td style={{ fontWeight: '700', color: '#ffffff' }}>{team.name}</td>
+                  <td style={{ fontWeight: '700', color: team.isDisqualified ? 'var(--danger)' : '#ffffff', textDecoration: team.isDisqualified ? 'line-through' : 'none' }}>
+                    {team.name}
+                    {team.isDisqualified && (
+                      <span className="badge badge-danger" style={{ marginLeft: '0.4rem', fontSize: '0.65rem' }}>
+                        DISQUALIFIED
+                      </span>
+                    )}
+                  </td>
                   <td style={{ fontFamily: 'JetBrains Mono, monospace' }}>{team.localPlayers.length}</td>
                   <td style={{ color: 'var(--crimson-danger)', fontFamily: 'JetBrains Mono, monospace' }}>₹{(team.localMoneySpent / 10000000).toFixed(2)} Cr</td>
                   <td style={{ color: 'var(--emerald-live)', fontFamily: 'JetBrains Mono, monospace' }}>₹{(team.remainingPurse / 10000000).toFixed(2)} Cr</td>
@@ -818,8 +825,13 @@ export default function ManagerDashboard() {
                               <p style={{ margin: '0.2rem 0', color: 'var(--text-muted)' }}>
                                 Budget: <strong style={{ color: 'var(--success)' }}>₹{(team.budget / 10000000).toFixed(2)} Cr</strong>
                               </p>
+                              {team.isDisqualified && team.disqualificationReason && (
+                                <p style={{ margin: '0.2rem 0', color: 'var(--danger)', fontSize: '0.8rem', fontFamily: 'JetBrains Mono, monospace' }}>
+                                  ⚠️ {team.disqualificationReason}
+                                </p>
+                              )}
                               <p style={{ margin: '0 0 1rem 0', color: 'var(--text-muted)' }}>
-                                Roster: <strong>{localPlayers.length} Players</strong>
+                                Roster: <strong>{localPlayers.length} / 12 Players</strong>
                               </p>
                               <button 
                                 onClick={() => handleToggleDisqualify(team.id, team.isDisqualified)}

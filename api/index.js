@@ -11,6 +11,50 @@ const { db, auth, admin } = require('./firestore-adapter');
 const DEFAULT_PURSE = 900_000_000; // 90 Cr
 const DEFAULT_FRANCHISES = ['CSK', 'MI', 'RCB', 'DC', 'KKR', 'PBKS', 'RR', 'SRH', 'LSG', 'GT'];
 
+const ROSTER_LIMIT = 12;
+const MANDATORY_ROSTER_QUOTA = {
+  BATSMAN: 4,
+  BOWLER: 4,
+  WICKET_KEEPER: 1,
+  ALL_ROUNDER: 3,
+};
+const MAX_OVERSEAS_LIMIT = 4;
+
+function isOverseasPlayer(p) {
+  if (!p) return false;
+  if (p.isOverseas !== undefined) return Boolean(p.isOverseas);
+  const country = (p.country || '').trim().toUpperCase();
+  return country !== '' && country !== 'IND' && country !== 'INDIA';
+}
+
+function checkTeamQuotaBreach(players) {
+  if (!Array.isArray(players)) return null;
+  if (players.length > ROSTER_LIMIT) {
+    return `EXCEEDED ROSTER LIMIT (${players.length}/${ROSTER_LIMIT} players)`;
+  }
+  const batsmen = players.filter(p => p.category === 'BATSMAN').length;
+  if (batsmen > MANDATORY_ROSTER_QUOTA.BATSMAN) {
+    return `EXCEEDED BATSMEN QUOTA (${batsmen}/${MANDATORY_ROSTER_QUOTA.BATSMAN} batsmen)`;
+  }
+  const bowlers = players.filter(p => p.category === 'BOWLER').length;
+  if (bowlers > MANDATORY_ROSTER_QUOTA.BOWLER) {
+    return `EXCEEDED BOWLERS QUOTA (${bowlers}/${MANDATORY_ROSTER_QUOTA.BOWLER} bowlers)`;
+  }
+  const wk = players.filter(p => p.category === 'WICKET_KEEPER').length;
+  if (wk > MANDATORY_ROSTER_QUOTA.WICKET_KEEPER) {
+    return `EXCEEDED WICKETKEEPER QUOTA (${wk}/${MANDATORY_ROSTER_QUOTA.WICKET_KEEPER} wicketkeeper)`;
+  }
+  const ar = players.filter(p => p.category === 'ALL_ROUNDER').length;
+  if (ar > MANDATORY_ROSTER_QUOTA.ALL_ROUNDER) {
+    return `EXCEEDED ALL-ROUNDER QUOTA (${ar}/${MANDATORY_ROSTER_QUOTA.ALL_ROUNDER} all-rounders)`;
+  }
+  const overseas = players.filter(p => isOverseasPlayer(p)).length;
+  if (overseas > MAX_OVERSEAS_LIMIT) {
+    return `EXCEEDED OVERSEAS QUOTA (${overseas}/${MAX_OVERSEAS_LIMIT} overseas players)`;
+  }
+  return null;
+}
+
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
@@ -183,7 +227,7 @@ app.post('/api/login', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/teams', async (req, res) => {
   try {
-    const cached = getCached('teams_all', 20000);
+    const cached = getCached('teams_all', 10000);
     if (cached) return res.json(cached);
 
     const [teamsSnap, playersSnap] = await Promise.all([
@@ -201,11 +245,30 @@ app.get('/api/teams', async (req, res) => {
       }
     });
 
-    const teams = teamsSnap.docs.map((tDoc) => ({
-      id: tDoc.id,
-      ...tDoc.data(),
-      players: soldByTeam.get(tDoc.id) || [],
-    }));
+    const teams = teamsSnap.docs.map((tDoc) => {
+      const tData = tDoc.data();
+      const soldPlayers = soldByTeam.get(tDoc.id) || [];
+      const quotaBreach = checkTeamQuotaBreach(soldPlayers);
+      const isDisqualified = Boolean(tData.isDisqualified || quotaBreach);
+      const disqualificationReason = quotaBreach || tData.disqualificationReason || (tData.mistakes >= 3 ? 'Exceeded 3 warning penalties' : null);
+
+      if (quotaBreach && !tData.isDisqualified) {
+        db.collection('teams').doc(tDoc.id).update({
+          isDisqualified: true,
+          disqualificationReason: quotaBreach,
+          mistakes: 3,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(console.error);
+      }
+
+      return {
+        id: tDoc.id,
+        ...tData,
+        isDisqualified,
+        disqualificationReason,
+        players: soldPlayers,
+      };
+    });
 
     setCache('teams_all', teams);
     res.json(teams);
@@ -236,21 +299,44 @@ app.put('/api/teams/:id/disqualify', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/locations', async (req, res) => {
   try {
-    const cached = getCached('locations_all', 20000);
+    const cached = getCached('locations_all', 10000);
     if (cached) return res.json(cached);
 
-    const [locationsSnap, teamsSnap, usersSnap] = await Promise.all([
+    const [locationsSnap, teamsSnap, usersSnap, playersSnap] = await Promise.all([
       db.collection('locations').orderBy('name', 'asc').get(),
       db.collection('teams').get(),
       db.collection('users').get(),
+      db.collection('players').where('status', '==', 'SOLD').get(),
     ]);
+
+    const soldByTeam = new Map();
+    playersSnap.forEach((pDoc) => {
+      const p = { id: pDoc.id, ...pDoc.data() };
+      if (p.teamId) {
+        const list = soldByTeam.get(String(p.teamId)) || [];
+        list.push(p);
+        soldByTeam.set(String(p.teamId), list);
+      }
+    });
 
     const teamsByLoc = new Map();
     teamsSnap.forEach((t) => {
-      const data = { id: t.id, ...t.data() };
-      const list = teamsByLoc.get(data.locationId) || [];
-      list.push(data);
-      teamsByLoc.set(data.locationId, list);
+      const tData = t.data();
+      const soldPlayers = soldByTeam.get(t.id) || [];
+      const quotaBreach = checkTeamQuotaBreach(soldPlayers);
+      const isDisqualified = Boolean(tData.isDisqualified || quotaBreach);
+      const disqualificationReason = quotaBreach || tData.disqualificationReason || (tData.mistakes >= 3 ? 'Exceeded 3 warning penalties' : null);
+
+      const teamObj = {
+        id: t.id,
+        ...tData,
+        isDisqualified,
+        disqualificationReason,
+        players: soldPlayers,
+      };
+      const list = teamsByLoc.get(teamObj.locationId) || [];
+      list.push(teamObj);
+      teamsByLoc.set(teamObj.locationId, list);
     });
 
     const usersByLoc = new Map();
@@ -1062,13 +1148,50 @@ app.post('/api/bids', async (req, res) => {
         throw new Error(`Cannot bid: player status is ${playerData.status}, must be LIVE`);
       }
       if (teamData.isDisqualified) {
-        throw new Error(`Cannot bid: team ${teamData.name} is disqualified`);
+        throw new Error(`Cannot bid: Team ${teamData.name} is disqualified (${teamData.disqualificationReason || 'disciplinary'})`);
       }
 
       // 3. Budget Validation
       const teamBudget = Number(teamData.budget || 0);
       if (numAmount > teamBudget) {
         throw new Error(`Insufficient budget: ₹${(numAmount / 10_000_000).toFixed(2)} Cr exceeds remaining ₹${(teamBudget / 10_000_000).toFixed(2)} Cr`);
+      }
+
+      // 3b. Roster and Quota Validation (12 Roster: 4 BAT, 4 BOWL, 1 WK, 3 AR, max 4 Overseas)
+      const teamSoldSnap = await db.collection('players').where('teamId', '==', teamId).where('status', '==', 'SOLD').get();
+      const currentTeamPlayers = teamSoldSnap.docs.map(d => d.data());
+
+      const existingBreach = checkTeamQuotaBreach(currentTeamPlayers);
+      if (existingBreach) {
+        throw new Error(`Cannot bid: Team ${teamData.name} is disqualified due to ${existingBreach}`);
+      }
+
+      if (currentTeamPlayers.length >= ROSTER_LIMIT) {
+        throw new Error(`Cannot bid: Team ${teamData.name} roster is full (12/12 players). Further purchases cause direct disqualification.`);
+      }
+
+      const pCat = playerData.category;
+      const bCount = currentTeamPlayers.filter(p => p.category === 'BATSMAN').length;
+      const bowlCount = currentTeamPlayers.filter(p => p.category === 'BOWLER').length;
+      const wkCount = currentTeamPlayers.filter(p => p.category === 'WICKET_KEEPER').length;
+      const arCount = currentTeamPlayers.filter(p => p.category === 'ALL_ROUNDER').length;
+      const overseasCount = currentTeamPlayers.filter(p => isOverseasPlayer(p)).length;
+      const isPlayerOverseas = isOverseasPlayer(playerData);
+
+      if (pCat === 'BATSMAN' && bCount >= MANDATORY_ROSTER_QUOTA.BATSMAN) {
+        throw new Error(`Cannot bid: Team ${teamData.name} already reached maximum 4 Batsmen. Further purchases cause direct disqualification.`);
+      }
+      if (pCat === 'BOWLER' && bowlCount >= MANDATORY_ROSTER_QUOTA.BOWLER) {
+        throw new Error(`Cannot bid: Team ${teamData.name} already reached maximum 4 Bowlers. Further purchases cause direct disqualification.`);
+      }
+      if (pCat === 'WICKET_KEEPER' && wkCount >= MANDATORY_ROSTER_QUOTA.WICKET_KEEPER) {
+        throw new Error(`Cannot bid: Team ${teamData.name} already reached maximum 1 Wicketkeeper. Further purchases cause direct disqualification.`);
+      }
+      if (pCat === 'ALL_ROUNDER' && arCount >= MANDATORY_ROSTER_QUOTA.ALL_ROUNDER) {
+        throw new Error(`Cannot bid: Team ${teamData.name} already reached maximum 3 All-rounders. Further purchases cause direct disqualification.`);
+      }
+      if (isPlayerOverseas && overseasCount >= MAX_OVERSEAS_LIMIT) {
+        throw new Error(`Cannot bid: Team ${teamData.name} already reached maximum 4 Overseas players. Further purchases cause direct disqualification.`);
       }
 
       // 4. Increment and Current Price Validation
@@ -1150,6 +1273,22 @@ app.post('/api/auction/sell', async (req, res) => {
         throw new Error(`Player is not LIVE (status: ${pData.status})`);
       }
 
+      const teamSoldSnap = await db.collection('players').where('teamId', '==', teamId).where('status', '==', 'SOLD').get();
+      const currentSoldPlayers = teamSoldSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const updatedSquad = [
+        ...currentSoldPlayers,
+        {
+          id: pDoc.id,
+          ...pData,
+          category: pData.category,
+          country: pData.country,
+          isOverseas: pData.isOverseas,
+        },
+      ];
+
+      const quotaBreach = checkTeamQuotaBreach(updatedSquad);
+
       const currentBudget = Number(tData.budget || 0);
       if (currentBudget < saleAmount) {
         throw new Error(`Team budget insufficient: ₹${currentBudget / 10_000_000} Cr < ₹${saleAmount / 10_000_000} Cr`);
@@ -1165,10 +1304,18 @@ app.post('/api/auction/sell', async (req, res) => {
         updatedAt: now,
       });
 
-      transaction.update(teamRef, {
+      const teamUpdates = {
         budget: newBudget,
         updatedAt: now,
-      });
+      };
+
+      if (quotaBreach) {
+        teamUpdates.isDisqualified = true;
+        teamUpdates.disqualificationReason = quotaBreach;
+        teamUpdates.mistakes = 3;
+      }
+
+      transaction.update(teamRef, teamUpdates);
 
       transaction.update(locationRef, {
         activePlayerId: null,
@@ -1182,12 +1329,26 @@ app.post('/api/auction/sell', async (req, res) => {
       return {
         success: true,
         player: { id: pDoc.id, ...pData, status: 'SOLD', soldPrice: saleAmount, teamId },
-        team: { id: tDoc.id, ...tData, budget: newBudget },
+        team: { id: tDoc.id, ...tData, ...teamUpdates },
+        quotaBreach,
       };
     });
 
+    invalidateCache('teams');
     await logAuditEvent('PLAYER_SOLD', { playerId, teamId, amount: saleAmount }, locationId);
     broadcastEvent(locationId, 'playerSold', result.player);
+
+    if (result.quotaBreach) {
+      broadcastEvent(locationId, 'penaltyIssued', {
+        teamId,
+        mistakes: 3,
+        isDisqualified: true,
+        reason: result.quotaBreach,
+        locationId,
+      });
+      await logAuditEvent('TEAM_DISQUALIFIED_QUOTA_BREACH', { teamId, reason: result.quotaBreach }, locationId);
+    }
+
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });

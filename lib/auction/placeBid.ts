@@ -1,6 +1,6 @@
 import { adminDb } from '../firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { validateMonetaryAmount, validateBidAmount, ValidationError } from '../validation';
+import { validateMonetaryAmount, validateBidAmount, ValidationError, isOverseasPlayer, checkTeamQuotaBreach } from '../validation';
 import { AuthenticatedUser } from '../auth';
 
 export interface PlaceBidInput {
@@ -59,7 +59,7 @@ export async function placeBidTransaction(input: PlaceBidInput): Promise<PlaceBi
 
     // 3. Verify team is not disqualified
     if (teamData.isDisqualified) {
-      throw new ValidationError(`Team ${teamData.name} is disqualified and cannot place bids.`, 403);
+      throw new ValidationError(`Team ${teamData.name} is disqualified (${teamData.disqualificationReason || 'disciplinary'}) and cannot place bids.`, 403);
     }
 
     // 4. Verify auction is not on a break
@@ -78,6 +78,43 @@ export async function placeBidTransaction(input: PlaceBidInput): Promise<PlaceBi
         `Insufficient budget: Team ${teamData.name} only has ₹${teamBudget / 10_000_000} Cr remaining, cannot bid ₹${amount / 10_000_000} Cr.`,
         400
       );
+    }
+
+    // 7. Verify team roster capacity and quota limits (12 Roster: 4 BAT, 4 BOWL, 1 WK, 3 AR, max 4 Overseas)
+    const teamSoldSnap = await adminDb.collection('players').where('teamId', '==', input.teamId).where('status', '==', 'SOLD').get();
+    const teamPlayers = teamSoldSnap.docs.map(d => d.data());
+
+    const existingBreach = checkTeamQuotaBreach(teamPlayers);
+    if (existingBreach) {
+      throw new ValidationError(`Team ${teamData.name} is disqualified due to ${existingBreach}. Bids rejected.`, 403);
+    }
+
+    if (teamPlayers.length >= 12) {
+      throw new ValidationError(`Team ${teamData.name} roster is full (12/12 players). Further purchase causes direct disqualification.`, 400);
+    }
+
+    const cat = playerData.category;
+    const batsmen = teamPlayers.filter(p => p.category === 'BATSMAN').length;
+    const bowlers = teamPlayers.filter(p => p.category === 'BOWLER').length;
+    const wk = teamPlayers.filter(p => p.category === 'WICKET_KEEPER').length;
+    const ar = teamPlayers.filter(p => p.category === 'ALL_ROUNDER').length;
+    const overseas = teamPlayers.filter(p => isOverseasPlayer(p)).length;
+    const isPlayerOverseas = isOverseasPlayer(playerData);
+
+    if (cat === 'BATSMAN' && batsmen >= 4) {
+      throw new ValidationError(`Team ${teamData.name} already reached maximum 4 Batsmen. Further purchase causes direct disqualification.`, 400);
+    }
+    if (cat === 'BOWLER' && bowlers >= 4) {
+      throw new ValidationError(`Team ${teamData.name} already reached maximum 4 Bowlers. Further purchase causes direct disqualification.`, 400);
+    }
+    if (cat === 'WICKET_KEEPER' && wk >= 1) {
+      throw new ValidationError(`Team ${teamData.name} already reached maximum 1 Wicketkeeper. Further purchase causes direct disqualification.`, 400);
+    }
+    if (cat === 'ALL_ROUNDER' && ar >= 3) {
+      throw new ValidationError(`Team ${teamData.name} already reached maximum 3 All-rounders. Further purchase causes direct disqualification.`, 400);
+    }
+    if (isPlayerOverseas && overseas >= 4) {
+      throw new ValidationError(`Team ${teamData.name} already reached maximum 4 Overseas players. Further purchase causes direct disqualification.`, 400);
     }
 
     // Create bid document

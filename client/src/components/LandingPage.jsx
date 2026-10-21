@@ -611,7 +611,11 @@ export default function LandingPage({ initialSection }) {
           const currentBidAmount = livePlayer?.currentBid || currentBid?.amount || livePlayer?.basePrice || 0;
           const cleanName = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
           const playerImgSrc = isPlayerActive
-            ? (livePlayer?.imageUrl || playerImageMap[cleanName] || `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.png`)
+            ? ((livePlayer?.imageUrl && !livePlayer.imageUrl.includes('ui-avatars.com'))
+                ? livePlayer.imageUrl
+                : (playerImageMap[cleanName] && !playerImageMap[cleanName].includes('ui-avatars.com')
+                    ? playerImageMap[cleanName]
+                    : `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.png`))
             : '/gavel.jpg';
 
           return (

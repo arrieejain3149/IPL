@@ -519,7 +519,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       socket.on('penaltyIssued', (data) => {
         setTeams(prevTeams => prevTeams.map(t => 
           t.id === data.teamId 
-            ? { ...t, mistakes: data.mistakes, isDisqualified: data.isDisqualified } 
+            ? { ...t, mistakes: data.mistakes ?? 3, isDisqualified: Boolean(data.isDisqualified), disqualificationReason: data.reason || t.disqualificationReason } 
             : t
         ));
       });
@@ -712,32 +712,77 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     socket.emit('toggleBreak', { locationId: selectedLocation, show: newBreakMode });
   };
 
+  const isOverseasPlayer = (p) => {
+    if (!p) return false;
+    if (p.isOverseas !== undefined) return Boolean(p.isOverseas);
+    const country = (p.country || '').trim().toUpperCase();
+    return country !== '' && country !== 'IND' && country !== 'INDIA';
+  };
+
+  const checkTeamQuotaBreach = (players) => {
+    if (!Array.isArray(players)) return null;
+    if (players.length > 12) {
+      return `EXCEEDED 12 ROSTER (${players.length}/12)`;
+    }
+    const batsmen = players.filter(p => p.category === 'BATSMAN').length;
+    if (batsmen > 4) {
+      return `EXCEEDED 4 BATSMEN (${batsmen}/4)`;
+    }
+    const bowlers = players.filter(p => p.category === 'BOWLER').length;
+    if (bowlers > 4) {
+      return `EXCEEDED 4 BOWLERS (${bowlers}/4)`;
+    }
+    const wk = players.filter(p => p.category === 'WICKET_KEEPER').length;
+    if (wk > 1) {
+      return `EXCEEDED 1 WK (${wk}/1)`;
+    }
+    const ar = players.filter(p => p.category === 'ALL_ROUNDER').length;
+    if (ar > 3) {
+      return `EXCEEDED 3 ALL-ROUNDERS (${ar}/3)`;
+    }
+    const overseas = players.filter(p => isOverseasPlayer(p)).length;
+    if (overseas > 4) {
+      return `EXCEEDED 4 OVERSEAS (${overseas}/4)`;
+    }
+    return null;
+  };
+
   const getTeamEligibility = (team, nextBidAmount, player) => {
-    if (team.isDisqualified) return { eligible: false, reason: 'DISQUALIFIED' };
+    const existingBreach = checkTeamQuotaBreach(team.players || []);
+    if (team.isDisqualified || existingBreach) {
+      return { 
+        eligible: false, 
+        reason: team.disqualificationReason ? `DISQUALIFIED (${team.disqualificationReason})` : (existingBreach ? `DISQUALIFIED (${existingBreach})` : 'DISQUALIFIED') 
+      };
+    }
     if (!player) return { eligible: true };
     
     if (team.budget < nextBidAmount) return { eligible: false, reason: 'INSUFFICIENT PURSE' };
-    if (team.players?.length >= 15) return { eligible: false, reason: 'ROSTER FULL (15)' };
+    if ((team.players?.length || 0) >= 12) return { eligible: false, reason: 'ROSTER FULL (12) - DISQUALIFY' };
 
     const bowlers = team.players?.filter(p => p.category === 'BOWLER').length || 0;
     const batsmen = team.players?.filter(p => p.category === 'BATSMAN').length || 0;
     const allRounders = team.players?.filter(p => p.category === 'ALL_ROUNDER').length || 0;
     const wicketKeepers = team.players?.filter(p => p.category === 'WICKET_KEEPER').length || 0;
-    
-    const overseasCount = team.players?.filter(p => p.country && p.country.toUpperCase() !== 'IND' && p.country.toUpperCase() !== 'INDIA').length || 0;
-    const indianCount = (team.players?.length || 0) - overseasCount;
-    const isOverseas = player.country && player.country.toUpperCase() !== 'IND' && player.country.toUpperCase() !== 'INDIA';
 
-    if (isOverseas && overseasCount >= 4) return { eligible: false, reason: 'MAX OVERSEAS (4)' };
-    if (!isOverseas && indianCount >= 12) return { eligible: false, reason: 'OVERSEAS SLOT REQUIRED' };
+    // Strict 12 Roster Composition: 4 Batsmen, 4 Bowlers, 1 Wicketkeeper, 3 All-rounders
+    if (player.category === 'BATSMAN' && batsmen >= 4) return { eligible: false, reason: 'MAX BAT (4) - DISQUALIFY' };
+    if (player.category === 'BOWLER' && bowlers >= 4) return { eligible: false, reason: 'MAX BOWL (4) - DISQUALIFY' };
+    if (player.category === 'WICKET_KEEPER' && wicketKeepers >= 1) return { eligible: false, reason: 'MAX WK (1) - DISQUALIFY' };
+    if (player.category === 'ALL_ROUNDER' && allRounders >= 3) return { eligible: false, reason: 'MAX AR (3) - DISQUALIFY' };
+    
+    const overseasCount = team.players?.filter(p => isOverseasPlayer(p)).length || 0;
+    const isOverseas = isOverseasPlayer(player);
+
+    if (isOverseas && overseasCount >= 4) return { eligible: false, reason: 'MAX OVERSEAS (4) - DISQUALIFY' };
 
     const reqBowlers = Math.max(0, 4 - (bowlers + (player.category === 'BOWLER' ? 1 : 0)));
     const reqBatsmen = Math.max(0, 4 - (batsmen + (player.category === 'BATSMAN' ? 1 : 0)));
     const reqWk = Math.max(0, 1 - (wicketKeepers + (player.category === 'WICKET_KEEPER' ? 1 : 0)));
-    const reqAr = Math.max(0, 2 - (allRounders + (player.category === 'ALL_ROUNDER' ? 1 : 0)));
+    const reqAr = Math.max(0, 3 - (allRounders + (player.category === 'ALL_ROUNDER' ? 1 : 0)));
     
     const requiredSlots = reqBowlers + reqBatsmen + reqWk + reqAr;
-    const remainingSlots = 15 - ((team.players?.length || 0) + 1);
+    const remainingSlots = 12 - ((team.players?.length || 0) + 1);
     
     if (requiredSlots > remainingSlots) {
       return { eligible: false, reason: 'MINIMUM QUOTA VIOLATION' };
@@ -747,9 +792,9 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   };
 
   const getAvatar = (name, url) => {
-    if (url) return url;
     const clean = (name || '').toLowerCase().replace(/[^a-z]/g, '');
-    if (playerImageMap[clean]) return playerImageMap[clean];
+    if (url && !url.includes('ui-avatars.com')) return url;
+    if (playerImageMap[clean] && !playerImageMap[clean].includes('ui-avatars.com')) return playerImageMap[clean];
     return `/players/${(name || '').toLowerCase().replace(/ /g, '_')}.png`;
   };
 
@@ -1271,7 +1316,22 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                       border: '1px solid rgba(255, 255, 255, 0.04)'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <img src={getAvatar(p.name, p.imageUrl)} style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover' }} alt="" />
+                        <img 
+                          src={getAvatar(p.name, p.imageUrl)} 
+                          style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover' }} 
+                          alt="" 
+                          onError={(e) => {
+                            const clean = (p.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                            if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                              e.currentTarget.src = playerImageMap[clean];
+                            } else {
+                              const fallbackJpeg = `/players/${(p.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                              if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                                e.currentTarget.src = fallbackJpeg;
+                              }
+                            }
+                          }}
+                        />
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                             <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffffff' }}>{p.name}</div>
@@ -1344,7 +1404,22 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                 justifyContent: 'center',
                 marginBottom: '1rem'
               }}>
-                <img src={getAvatar(livePlayer.name, livePlayer.imageUrl)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                <img 
+                  src={getAvatar(livePlayer.name, livePlayer.imageUrl)} 
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                  alt="" 
+                  onError={(e) => {
+                    const clean = (livePlayer?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+                    if (playerImageMap[clean] && e.currentTarget.src !== playerImageMap[clean]) {
+                      e.currentTarget.src = playerImageMap[clean];
+                    } else {
+                      const fallbackJpeg = `/players/${(livePlayer?.name || '').toLowerCase().replace(/ /g, '_')}.jpeg`;
+                      if (e.currentTarget.src.indexOf(fallbackJpeg) === -1) {
+                        e.currentTarget.src = fallbackJpeg;
+                      }
+                    }
+                  }}
+                />
               </div>
 
               <h1 style={{ fontSize: '2.4rem', fontWeight: '900', color: '#ffffff', marginBottom: '0.25rem' }}>
@@ -1395,7 +1470,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                         <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                           <button 
                             className="btn"
-                            disabled={t.isDisqualified || isBreakMode}
+                            disabled={t.isDisqualified || isBreakMode || !eligibility.eligible}
                             style={{ 
                               background: isBidding 
                                 ? 'linear-gradient(135deg, var(--gold-bright), var(--gold-primary))' 
@@ -1406,23 +1481,23 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                                 : eligibility.eligible 
                                   ? '1px solid rgba(255, 255, 255, 0.1)' 
                                   : '1px solid var(--crimson-border)',
-                              opacity: t.isDisqualified || isBreakMode ? 0.35 : 1,
-                              cursor: t.isDisqualified || isBreakMode ? 'not-allowed' : 'pointer',
+                              opacity: t.isDisqualified || isBreakMode || !eligibility.eligible ? 0.35 : 1,
+                              cursor: t.isDisqualified || isBreakMode || !eligibility.eligible ? 'not-allowed' : 'pointer',
                               padding: '0.65rem 0.4rem',
                               fontSize: '0.78rem',
                               fontWeight: '700',
                               flexDirection: 'column',
                               gap: '0.15rem'
                             }}
-                            onClick={() => !isBreakMode && incrementBid(t.id)}
+                            onClick={() => !isBreakMode && eligibility.eligible && incrementBid(t.id)}
                           >
                             <span>{t.name}</span>
                             <span style={{ fontSize: '0.65rem', opacity: 0.8, fontFamily: 'JetBrains Mono, monospace' }}>
                               ₹{(t.budget / 10000000).toFixed(1)}Cr
                             </span>
                           </button>
-                          {!eligibility.eligible && !t.isDisqualified && (
-                            <span style={{ color: 'var(--crimson-danger)', fontSize: '0.65rem', fontFamily: 'JetBrains Mono, monospace' }}>
+                          {!eligibility.eligible && (
+                            <span style={{ color: 'var(--crimson-danger)', fontSize: '0.62rem', fontFamily: 'JetBrains Mono, monospace', fontWeight: '700', textAlign: 'center', lineHeight: '1.1' }}>
                               {eligibility.reason}
                             </span>
                           )}
@@ -1671,55 +1746,92 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-            {teams.map(t => (
-              <div key={t.id} style={{ 
-                background: 'rgba(16, 21, 29, 0.85)', 
-                padding: '0.75rem', 
-                borderRadius: '6px',
-                border: t.isDisqualified ? '1px solid var(--crimson-border)' : '1px solid rgba(255, 255, 255, 0.04)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: '700', fontSize: '0.85rem', color: '#ffffff', textDecoration: t.isDisqualified ? 'line-through' : 'none' }}>
-                      {t.name}
+            {teams.map(t => {
+              const quotaBreach = checkTeamQuotaBreach(t.players || []);
+              const isDisqualified = Boolean(t.isDisqualified || quotaBreach);
+              const reason = t.disqualificationReason || quotaBreach || (t.mistakes >= 3 ? '3 WARNINGS' : null);
+
+              return (
+                <div key={t.id} style={{ 
+                  background: isDisqualified ? 'rgba(235, 87, 87, 0.08)' : 'rgba(16, 21, 29, 0.85)', 
+                  padding: '0.75rem', 
+                  borderRadius: '6px',
+                  border: isDisqualified ? '1px solid var(--crimson-border)' : '1px solid rgba(255, 255, 255, 0.04)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontWeight: '700', fontSize: '0.85rem', color: isDisqualified ? 'var(--crimson-danger)' : '#ffffff', textDecoration: isDisqualified ? 'line-through' : 'none' }}>
+                          {t.name}
+                        </span>
+                        {isDisqualified && (
+                          <span style={{ 
+                            background: 'var(--crimson-surface)', 
+                            color: 'var(--crimson-danger)', 
+                            border: '1px solid var(--crimson-border)', 
+                            padding: '0.1rem 0.35rem', 
+                            fontSize: '0.58rem', 
+                            fontWeight: '800', 
+                            borderRadius: '3px',
+                            fontFamily: 'JetBrains Mono, monospace'
+                          }}>
+                            DISQUALIFIED
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: isDisqualified ? 'var(--crimson-danger)' : 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        Roster: {t.players?.length || 0}/12 {quotaBreach ? `(${quotaBreach})` : ''}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                      Roster: {t.players?.length || 0}/15
+                    <div style={{ color: 'var(--gold-bright)', fontWeight: '800', fontSize: '0.95rem', fontFamily: 'JetBrains Mono, monospace' }}>
+                      ₹{(t.budget / 10000000).toFixed(2)} Cr
                     </div>
                   </div>
-                  <div style={{ color: 'var(--gold-bright)', fontWeight: '800', fontSize: '0.95rem', fontFamily: 'JetBrains Mono, monospace' }}>
-                    ₹{(t.budget / 10000000).toFixed(2)} Cr
+                  
+                  {isDisqualified && reason && (
+                    <div style={{ 
+                      marginTop: '0.35rem', 
+                      fontSize: '0.65rem', 
+                      color: 'var(--crimson-danger)', 
+                      fontFamily: 'JetBrains Mono, monospace', 
+                      fontWeight: '700',
+                      background: 'rgba(235, 87, 87, 0.1)',
+                      padding: '0.2rem 0.4rem',
+                      borderRadius: '4px'
+                    }}>
+                      ⚠️ {reason}
+                    </div>
+                  )}
+
+                  {/* Penalty Status & Controls */}
+                  <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '0.4rem' }}>
+                    <span style={{ fontSize: '0.7rem', color: t.mistakes >= 3 || isDisqualified ? 'var(--crimson-danger)' : t.mistakes > 0 ? 'var(--amber-warning)' : 'var(--text-dim)', fontWeight: '700', fontFamily: 'JetBrains Mono, monospace' }}>
+                      WARNINGS: {t.mistakes || 0}/3 {isDisqualified ? '[LOCKED]' : ''}
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      {t.mistakes > 0 && (
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem' }}
+                          onClick={() => reversePenalty(t.id)}
+                        >
+                          - REDUCE
+                        </button>
+                      )}
+                      {!isDisqualified && (
+                        <button 
+                          className="btn btn-danger" 
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem' }}
+                          onClick={() => issuePenalty(t.id)}
+                        >
+                          + PENALTY
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-                
-                {/* Penalty Status & Controls */}
-                <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '0.4rem' }}>
-                  <span style={{ fontSize: '0.7rem', color: t.mistakes >= 3 ? 'var(--crimson-danger)' : t.mistakes > 0 ? 'var(--amber-warning)' : 'var(--text-dim)', fontWeight: '700', fontFamily: 'JetBrains Mono, monospace' }}>
-                    WARNINGS: {t.mistakes || 0}/3 {t.isDisqualified ? '[LOCKED]' : ''}
-                  </span>
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    {t.mistakes > 0 && (
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem' }}
-                        onClick={() => reversePenalty(t.id)}
-                      >
-                        - REDUCE
-                      </button>
-                    )}
-                    {!t.isDisqualified && (
-                      <button 
-                        className="btn btn-danger" 
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem' }}
-                        onClick={() => issuePenalty(t.id)}
-                      >
-                        + PENALTY
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 import { adminDb } from '../firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { validateMonetaryAmount, ValidationError } from '../validation';
+import { validateMonetaryAmount, ValidationError, checkTeamQuotaBreach } from '../validation';
 
 export interface SellPlayerInput {
   playerId: string;
@@ -13,6 +13,7 @@ export interface SellPlayerResult {
   success: boolean;
   player: any;
   team: any;
+  quotaBreach?: string | null;
 }
 
 export async function sellPlayerTransaction(input: SellPlayerInput): Promise<SellPlayerResult> {
@@ -60,6 +61,31 @@ export async function sellPlayerTransaction(input: SellPlayerInput): Promise<Sel
       );
     }
 
+    // Check squad and quota breach upon sale
+    const teamSoldSnap = await adminDb.collection('players').where('teamId', '==', input.teamId).where('status', '==', 'SOLD').get();
+    const currentSoldPlayers = teamSoldSnap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        category: data.category as string | undefined,
+        country: data.country as string | undefined,
+        isOverseas: data.isOverseas as boolean | undefined,
+        ...data,
+      };
+    });
+
+    const updatedSquad = [
+      ...currentSoldPlayers,
+      {
+        id: playerDoc.id,
+        category: playerData.category as string | undefined,
+        country: playerData.country as string | undefined,
+        isOverseas: playerData.isOverseas as boolean | undefined,
+        ...playerData,
+      },
+    ];
+
+    const quotaBreach = checkTeamQuotaBreach(updatedSquad);
     const newBudget = currentBudget - amount;
     const now = FieldValue.serverTimestamp();
 
@@ -71,11 +97,19 @@ export async function sellPlayerTransaction(input: SellPlayerInput): Promise<Sel
       updatedAt: now,
     });
 
-    // 2. Atomically deduct purse from winning team
-    transaction.update(teamRef, {
+    // 2. Atomically deduct purse from winning team and disqualify if quota breached
+    const teamUpdates: Record<string, any> = {
       budget: newBudget,
       updatedAt: now,
-    });
+    };
+
+    if (quotaBreach) {
+      teamUpdates.isDisqualified = true;
+      teamUpdates.disqualificationReason = quotaBreach;
+      teamUpdates.mistakes = 3;
+    }
+
+    transaction.update(teamRef, teamUpdates);
 
     // 3. Clear active player in location
     transaction.update(locationRef, {
@@ -101,8 +135,9 @@ export async function sellPlayerTransaction(input: SellPlayerInput): Promise<Sel
       team: {
         id: teamDoc.id,
         ...teamData,
-        budget: newBudget,
+        ...teamUpdates,
       },
+      quotaBreach,
     };
   });
 }

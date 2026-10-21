@@ -9,6 +9,14 @@ export type UserRole = (typeof VALID_ROLES)[number];
 
 export const DEFAULT_TEAM_BUDGET = 900_000_000; // 90 Crores in INR
 
+export const ROSTER_LIMIT = 12;
+export const MANDATORY_ROSTER_QUOTA = {
+  BATSMAN: 4,
+  BOWLER: 4,
+  WICKET_KEEPER: 1,
+  ALL_ROUNDER: 3,
+} as const;
+
 export class ValidationError extends Error {
   statusCode: number;
   constructor(message: string, statusCode: number = 400) {
@@ -50,4 +58,41 @@ export function validateBidAmount(proposedAmount: number, currentBidOrBasePrice:
       `Bid amount (₹${proposedAmount}) must be strictly higher than current amount (₹${currentBidOrBasePrice}).`
     );
   }
+}
+
+export const MAX_OVERSEAS_LIMIT = 4;
+
+export function isOverseasPlayer(player: { isOverseas?: boolean; country?: string } | null | undefined): boolean {
+  if (!player) return false;
+  if (player.isOverseas !== undefined) return Boolean(player.isOverseas);
+  const country = (player.country || '').trim().toUpperCase();
+  return country !== '' && country !== 'IND' && country !== 'INDIA';
+}
+
+export function checkTeamQuotaBreach(players: Array<{ category?: string; isOverseas?: boolean; country?: string }> = []): string | null {
+  if (!Array.isArray(players)) return null;
+  if (players.length > ROSTER_LIMIT) {
+    return `EXCEEDED ROSTER LIMIT (${players.length}/${ROSTER_LIMIT} players)`;
+  }
+  const batsmen = players.filter(p => p.category === 'BATSMAN').length;
+  if (batsmen > MANDATORY_ROSTER_QUOTA.BATSMAN) {
+    return `EXCEEDED BATSMEN QUOTA (${batsmen}/${MANDATORY_ROSTER_QUOTA.BATSMAN} batsmen)`;
+  }
+  const bowlers = players.filter(p => p.category === 'BOWLER').length;
+  if (bowlers > MANDATORY_ROSTER_QUOTA.BOWLER) {
+    return `EXCEEDED BOWLERS QUOTA (${bowlers}/${MANDATORY_ROSTER_QUOTA.BOWLER} bowlers)`;
+  }
+  const wk = players.filter(p => p.category === 'WICKET_KEEPER').length;
+  if (wk > MANDATORY_ROSTER_QUOTA.WICKET_KEEPER) {
+    return `EXCEEDED WICKETKEEPER QUOTA (${wk}/${MANDATORY_ROSTER_QUOTA.WICKET_KEEPER} wicketkeeper)`;
+  }
+  const ar = players.filter(p => p.category === 'ALL_ROUNDER').length;
+  if (ar > MANDATORY_ROSTER_QUOTA.ALL_ROUNDER) {
+    return `EXCEEDED ALL-ROUNDER QUOTA (${ar}/${MANDATORY_ROSTER_QUOTA.ALL_ROUNDER} all-rounders)`;
+  }
+  const overseas = players.filter(p => isOverseasPlayer(p)).length;
+  if (overseas > MAX_OVERSEAS_LIMIT) {
+    return `EXCEEDED OVERSEAS QUOTA (${overseas}/${MAX_OVERSEAS_LIMIT} overseas players)`;
+  }
+  return null;
 }

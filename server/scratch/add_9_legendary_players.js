@@ -10,7 +10,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 98,
     pool: 'POOL-1 Batsman',
-    imageUrl: 'https://ui-avatars.com/api/?name=AB+de+Villiers&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428043/ipl_auction/players/ab_devilliers.jpg',
     status: 'UPCOMING'
   },
   {
@@ -20,7 +20,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 96,
     pool: 'POOL-1 Batsman',
-    imageUrl: 'https://ui-avatars.com/api/?name=Chris+Gayle&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428044/ipl_auction/players/chris_gayle.jpg',
     status: 'UPCOMING'
   },
   {
@@ -30,7 +30,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 95,
     pool: 'POOL-1 Batsman',
-    imageUrl: 'https://ui-avatars.com/api/?name=Suresh+Raina&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428045/ipl_auction/players/suresh_raina.jpg',
     status: 'UPCOMING'
   },
   // Bowlers
@@ -41,7 +41,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 95,
     pool: 'POOL-2 Bowler',
-    imageUrl: 'https://ui-avatars.com/api/?name=Lasith+Malinga&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428047/ipl_auction/players/lasith_malinga.jpg',
     status: 'UPCOMING'
   },
   {
@@ -51,7 +51,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 98,
     pool: 'POOL-2 Bowler',
-    imageUrl: 'https://ui-avatars.com/api/?name=Dwayne+Bravo&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428048/ipl_auction/players/dwayne_bravo.jpg',
     status: 'UPCOMING'
   },
   {
@@ -61,7 +61,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 96,
     pool: 'POOL-2 Bowler',
-    imageUrl: 'https://ui-avatars.com/api/?name=Dale+Steyn&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428049/ipl_auction/players/dale_steyn.jpg',
     status: 'UPCOMING'
   },
   // All Rounders
@@ -72,7 +72,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 95,
     pool: 'POOL-3 All-Rounder',
-    imageUrl: 'https://ui-avatars.com/api/?name=Andre+Russell&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428050/ipl_auction/players/andre_russell.jpg',
     status: 'UPCOMING'
   },
   {
@@ -82,7 +82,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 96,
     pool: 'POOL-3 All-Rounder',
-    imageUrl: 'https://ui-avatars.com/api/?name=Kieron+Pollard&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428052/ipl_auction/players/kieron_pollard.jpg',
     status: 'UPCOMING'
   },
   // Wicket Keeper
@@ -93,7 +93,7 @@ const newPlayers = [
     basePrice: 20000000,
     points: 95,
     pool: 'POOL-4 Wicket-Keeper',
-    imageUrl: 'https://ui-avatars.com/api/?name=Dinesh+Karthik&background=1a2332&color=ffd700&size=256&bold=true',
+    imageUrl: 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428056/ipl_auction/players/dinesh_karthik.jpg',
     status: 'UPCOMING'
   }
 ];
@@ -140,7 +140,8 @@ if (fs.existsSync(mapPath)) {
     const clean = p.name.toLowerCase().replace(/[^a-z]/g, '');
     imgMap[clean] = p.imageUrl;
   });
-  imgMap['dineshkartik'] = 'https://ui-avatars.com/api/?name=Dinesh+Karthik&background=1a2332&color=ffd700&size=256&bold=true';
+  imgMap['dineshkartik'] = 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428056/ipl_auction/players/dinesh_karthik.jpg';
+  imgMap['abdevillers'] = 'https://res.cloudinary.com/z3qsq5nr/image/upload/f_auto,q_auto,w_400,c_limit/v1792428043/ipl_auction/players/ab_devilliers.jpg';
   fs.writeFileSync(mapPath, JSON.stringify(imgMap, null, 2), 'utf8');
   console.log(`✅ Updated ${mapPath} with 9 new players`);
 }
