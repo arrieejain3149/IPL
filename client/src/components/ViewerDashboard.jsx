@@ -111,11 +111,8 @@ export default function ViewerDashboard() {
       .then(res => res.json())
       .then(fetchedLocs => {
         setLocations(fetchedLocs);
-        if (fetchedLocs.length > 0) {
-          if (!drawerVenueId) {
-            setDrawerVenueId(fetchedLocs[0].id);
-          }
-          setSelectedLocationId(prev => prev || fetchedLocs[0].id);
+        if (fetchedLocs.length > 0 && !drawerVenueId) {
+          setDrawerVenueId(fetchedLocs[0].id);
         }
 
         fetchedLocs.forEach(loc => {
@@ -137,18 +134,7 @@ export default function ViewerDashboard() {
               
               const livePlayer = data.find(p => p.status === 'LIVE') || null;
               setLivePlayers(prev => ({ ...prev, [loc.id]: livePlayer }));
-              if (livePlayer && livePlayer.currentBid) {
-                setCurrentBids(prev => ({
-                  ...prev,
-                  [loc.id]: {
-                    playerId: livePlayer.id,
-                    amount: livePlayer.currentBid,
-                    teamId: livePlayer.currentBidTeamId,
-                    teamName: livePlayer.currentBidTeamName,
-                    locationId: loc.id
-                  }
-                }));
-              } else if (!livePlayer) {
+              if (!livePlayer) {
                 setCurrentBids(prev => {
                   const next = { ...prev };
                   delete next[loc.id];
@@ -168,47 +154,8 @@ export default function ViewerDashboard() {
 
     socket.on('livePlayerUpdated', (player) => {
       const locId = player?.locationId || selectedLocationId || 'main_arena';
-
-      if (!player || player.isCleared || player.status === 'UPCOMING' || !player.id) {
-        setLivePlayers(prev => {
-          const next = { ...prev };
-          delete next[locId];
-          return next;
-        });
-        setCurrentBids(prev => {
-          const next = { ...prev };
-          delete next[locId];
-          return next;
-        });
-        setTimers(prev => {
-          const next = { ...prev };
-          delete next[locId];
-          return next;
-        });
-        return;
-      }
-
-      setLivePlayers(prev => ({ ...prev, [locId]: player }));
-      if (player.currentBid) {
-        setCurrentBids(prev => ({
-          ...prev,
-          [locId]: {
-            playerId: player.id,
-            amount: player.currentBid,
-            teamId: player.currentBidTeamId,
-            teamName: player.currentBidTeamName,
-            locationId: locId
-          }
-        }));
-      } else {
-        setCurrentBids(prev => {
-          const next = { ...prev };
-          delete next[locId];
-          return next;
-        });
-      }
-
-      if (player.timerDeadlineMs) {
+      setLivePlayers(prev => ({ ...prev, [locId]: player || null }));
+      if (player?.timerDeadlineMs) {
         setTimers(prev => ({
           ...prev,
           [locId]: {
@@ -220,28 +167,7 @@ export default function ViewerDashboard() {
       }
     });
 
-    socket.on('livePlayerCleared', (data) => {
-      if (!data || !data.locationId) return;
-      const locId = data.locationId;
-      setLivePlayers(prev => {
-        const next = { ...prev };
-        delete next[locId];
-        return next;
-      });
-      setCurrentBids(prev => {
-        const next = { ...prev };
-        delete next[locId];
-        return next;
-      });
-      setTimers(prev => {
-        const next = { ...prev };
-        delete next[locId];
-        return next;
-      });
-    });
-
     socket.on('timerUpdated', (data) => {
-      if (!data || !data.locationId) return;
       setTimers(prev => ({
         ...prev,
         [data.locationId]: {
@@ -255,21 +181,8 @@ export default function ViewerDashboard() {
     });
 
     socket.on('newBid', (data) => {
-      if (!data || !data.locationId) return;
       playBeep();
       setCurrentBids(prev => ({ ...prev, [data.locationId]: data }));
-      setLivePlayers(prev => {
-        const current = prev[data.locationId];
-        if (current && current.id === data.playerId) {
-          return {
-            ...current,
-            currentBid: data.amount,
-            currentBidTeamId: data.teamId,
-            currentBidTeamName: data.teamName
-          };
-        }
-        return prev;
-      });
       addActivity({
         type: 'BID',
         teamId: data.teamId,
@@ -280,56 +193,11 @@ export default function ViewerDashboard() {
       });
     });
 
-    socket.on('bidReversed', (data) => {
-      if (!data || !data.locationId) return;
-      if (data.previousAmount) {
-        setCurrentBids(prev => ({
-          ...prev,
-          [data.locationId]: {
-            amount: data.previousAmount,
-            teamId: data.previousTeamId,
-            playerId: data.playerId,
-            locationId: data.locationId
-          }
-        }));
-        setLivePlayers(prev => {
-          const current = prev[data.locationId];
-          if (current && current.id === data.playerId) {
-            return {
-              ...current,
-              currentBid: data.previousAmount,
-              currentBidTeamId: data.previousTeamId
-            };
-          }
-          return prev;
-        });
-      } else {
-        setCurrentBids(prev => {
-          const next = { ...prev };
-          delete next[data.locationId];
-          return next;
-        });
-        setLivePlayers(prev => {
-          const current = prev[data.locationId];
-          if (current && current.id === data.playerId) {
-            return {
-              ...current,
-              currentBid: null,
-              currentBidTeamId: null
-            };
-          }
-          return prev;
-        });
-      }
-    });
-
     socket.on('playerSold', (player) => {
-      if (!player || !player.locationId) return;
-      const locId = player.locationId;
-      setLivePlayers(prev => ({ ...prev, [locId]: player }));
+      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
       setCurrentBids(prev => {
         const next = { ...prev };
-        delete next[locId];
+        delete next[player.locationId];
         return next;
       });
 
@@ -338,17 +206,17 @@ export default function ViewerDashboard() {
         player,
         teamId: player.teamId,
         amount: player.soldPrice,
-        locationId: locId,
+        locationId: player.locationId,
         timestamp: Date.now()
       });
 
       // Update venue stats
       setVenueStats(prev => {
-        const current = prev[locId] || { topBuys: [], totalSpent: 0, playersSold: 0 };
+        const current = prev[player.locationId] || { topBuys: [], totalSpent: 0, playersSold: 0 };
         const newBuys = [...current.topBuys, player].sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 4);
         return {
           ...prev,
-          [locId]: {
+          [player.locationId]: {
             lastSold: player,
             topBuys: newBuys,
             totalSpent: current.totalSpent + (player.soldPrice || 0),
@@ -359,35 +227,31 @@ export default function ViewerDashboard() {
     });
 
     socket.on('playerUnsold', (player) => {
-      if (!player || !player.locationId) return;
-      const locId = player.locationId;
-      setLivePlayers(prev => ({ ...prev, [locId]: player }));
+      setLivePlayers(prev => ({ ...prev, [player.locationId]: player }));
       setCurrentBids(prev => {
         const next = { ...prev };
-        delete next[locId];
+        delete next[player.locationId];
         return next;
       });
 
       addActivity({
         type: 'UNSOLD',
         player,
-        locationId: locId,
+        locationId: player.locationId,
         timestamp: Date.now()
       });
     });
 
     socket.on('auctionBreakToggled', (data) => {
-      if (!data || !data.locationId) return;
       setBreakModes(prev => ({ ...prev, [data.locationId]: data.show }));
     });
 
     socket.on('auctionStarting', (data) => {
-      const remaining = data?.seconds || 5;
+      const remaining = data.seconds || 5;
       setAuctionStartingCountdown(remaining);
     });
 
     socket.on('auctionReset', (data) => {
-      setAuctionStartingCountdown(null);
       const locId = data?.locationId || selectedLocationId || locations[0]?.id || '1';
       setLivePlayers(prev => ({ ...prev, [locId]: null }));
       setCurrentBids(prev => {
@@ -413,10 +277,8 @@ export default function ViewerDashboard() {
 
     return () => {
       socket.off('livePlayerUpdated');
-      socket.off('livePlayerCleared');
       socket.off('timerUpdated');
       socket.off('newBid');
-      socket.off('bidReversed');
       socket.off('playerSold');
       socket.off('playerUnsold');
       socket.off('auctionBreakToggled');
@@ -469,56 +331,11 @@ export default function ViewerDashboard() {
     }
   };
 
-  // Reusable Top-Right Action Buttons: [ Venue Switcher ] [ ⛶ Fullscreen ] [ Home ]
+  // Reusable Top-Right Action Buttons: [ ← Back ] [ ⛶ Fullscreen ] [ Home ]
+  // No home logo, professional back arrow (Requirement 3)
   const renderHeaderActions = (showBack = true) => (
     <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-      {/* Venue Switcher Option on top near Fullscreen if more than 1 venue exists */}
-      {locations.length > 1 && (
-        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-          <select
-            value={selectedLocationId || locations[0]?.id || ''}
-            onChange={(e) => {
-              const newId = e.target.value;
-              setSelectedLocationId(newId);
-              setDrawerVenueId(newId);
-            }}
-            aria-label="Switch Venue"
-            style={{
-              background: 'rgba(20, 27, 37, 0.95)',
-              border: '1px solid rgba(212, 175, 55, 0.45)',
-              color: 'var(--gold-bright, #f0cc5d)',
-              padding: '0.45rem 1.8rem 0.45rem 0.85rem',
-              borderRadius: '6px',
-              fontSize: '0.82rem',
-              fontWeight: '700',
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: 'JetBrains Mono, monospace',
-              appearance: 'none',
-              boxShadow: '0 0 10px rgba(0,0,0,0.5)',
-              transition: 'border-color 0.2s ease'
-            }}
-          >
-            {locations.map(loc => (
-              <option key={loc.id} value={loc.id} style={{ background: '#0b0f17', color: '#ffffff' }}>
-                📍 {loc.name}
-              </option>
-            ))}
-          </select>
-          <span style={{
-            position: 'absolute',
-            right: '0.6rem',
-            pointerEvents: 'none',
-            fontSize: '0.65rem',
-            color: 'var(--gold-bright, #f0cc5d)'
-          }}>
-            ▼
-          </span>
-        </div>
-      )}
-
-      {/* Only show Back button if multiple venues exist and showBack is requested */}
-      {showBack && locations.length > 1 && (
+      {showBack && (
         <button
           onClick={() => setSelectedLocationId(null)}
           style={{
@@ -539,10 +356,9 @@ export default function ViewerDashboard() {
           onMouseOver={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
           onMouseOut={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'; e.currentTarget.style.background = 'rgba(20, 27, 37, 0.85)'; }}
         >
-          <span style={{ fontSize: '1rem', lineHeight: 1 }}>←</span> All Venues
+          <span style={{ fontSize: '1rem', lineHeight: 1 }}>←</span> Back
         </button>
       )}
-
       <button
         onClick={toggleFullScreen}
         style={{
@@ -565,7 +381,6 @@ export default function ViewerDashboard() {
       >
         <span>⛶</span> Fullscreen
       </button>
-
       <button
         onClick={() => navigate('/')}
         style={{
@@ -721,11 +536,7 @@ export default function ViewerDashboard() {
           const livePlayer = livePlayers[loc.id];
           const isLive = livePlayer && livePlayer.status === 'LIVE';
           const stats = venueStats[loc.id] || { totalSpent: 0, playersSold: 0 };
-          const activeBid = currentBids[loc.id] || (livePlayer?.currentBid ? {
-            amount: livePlayer.currentBid,
-            teamId: livePlayer.currentBidTeamId,
-            teamName: livePlayer.currentBidTeamName
-          } : null);
+          const activeBid = currentBids[loc.id];
           const isBreak = breakModes[loc.id];
 
           return (
@@ -903,11 +714,7 @@ export default function ViewerDashboard() {
     if (!loc) return null;
 
     const player = livePlayers[loc.id];
-    const activeBid = currentBids[loc.id] || (player?.currentBid ? {
-      amount: player.currentBid,
-      teamId: player.currentBidTeamId,
-      teamName: player.currentBidTeamName
-    } : null);
+    const activeBid = currentBids[loc.id];
 
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -956,51 +763,87 @@ export default function ViewerDashboard() {
             overflow: 'hidden',
             boxSizing: 'border-box'
           }}>
-            {/* Top Row: Red Accent + PLAYER PROFILE on left, and Header Actions on right */}
+            {/* Top Row: Live Status + Venue + Timer on left, and Header Actions on right */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                {/* Red bracket accent */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                {/* Live Indicator Badge */}
                 <div style={{
-                  width: '10px',
-                  height: '24px',
-                  borderLeft: '4px solid #ef4444',
-                  borderTop: '4px solid #ef4444'
-                }} />
-                <span style={{
-                  color: '#ef4444',
-                  fontSize: '0.9rem',
-                  fontWeight: '700',
-                  letterSpacing: '0.15em',
-                  textTransform: 'uppercase',
-                  fontFamily: 'JetBrains Mono, monospace'
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.55rem',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '30px',
+                  padding: '0.4rem 1rem'
                 }}>
-                  PLAYER PROFILE // {loc.name}
-                </span>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: '#ef4444',
+                    boxShadow: '0 0 10px #ef4444',
+                    display: 'inline-block'
+                  }} />
+                  <span style={{
+                    color: '#f87171',
+                    fontSize: '0.78rem',
+                    fontWeight: '800',
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    fontFamily: 'JetBrains Mono, monospace'
+                  }}>
+                    LIVE LOT
+                  </span>
+                </div>
+
+                {/* Venue Badge */}
+                {loc && loc.name && (
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '30px',
+                    padding: '0.4rem 0.95rem'
+                  }}>
+                    <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>📍</span>
+                    <span style={{
+                      color: '#cbd5e1',
+                      fontSize: '0.78rem',
+                      fontWeight: '700',
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      fontFamily: 'JetBrains Mono, monospace'
+                    }}>
+                      {loc.name}
+                    </span>
+                  </div>
+                )}
 
                 {/* Deadline Timer Badge */}
                 {timers[loc.id] && (
                   <div style={{
-                    marginLeft: '1.5rem',
-                    padding: '0.25rem 0.75rem',
+                    padding: '0.35rem 0.95rem',
                     background: timers[loc.id].paused 
-                      ? 'var(--amber-surface)' 
-                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-surface)' : 'rgba(212, 175, 55, 0.1)'),
+                      ? 'var(--amber-surface, rgba(245, 158, 11, 0.15))' 
+                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-surface, rgba(239, 68, 68, 0.2))' : 'rgba(212, 175, 55, 0.12)'),
                     border: `1px solid ${timers[loc.id].paused 
-                      ? 'var(--amber-border)' 
-                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-border)' : 'var(--gold-border)')}`,
-                    borderRadius: '4px',
+                      ? 'var(--amber-border, rgba(245, 158, 11, 0.4))' 
+                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-border, rgba(239, 68, 68, 0.5))' : 'var(--gold-border, rgba(212, 175, 55, 0.4))')}`,
+                    borderRadius: '30px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '0.5rem',
                     fontFamily: 'JetBrains Mono, monospace'
                   }}>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>TIME:</span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', fontWeight: '700' }}>TIME:</span>
                     <span style={{
-                      fontSize: '1rem',
+                      fontSize: '0.95rem',
                       fontWeight: '900',
                       color: timers[loc.id].paused 
-                        ? 'var(--amber-warning)' 
-                        : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-danger)' : 'var(--gold-bright)')
+                        ? 'var(--amber-warning, #f59e0b)' 
+                        : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-danger, #ef4444)' : 'var(--gold-bright, #f0cc5d)')
                     }}>
                       {timers[loc.id].paused ? 'PAUSED' : `${timers[loc.id].remainingSec}s`}
                     </span>
@@ -1012,23 +855,24 @@ export default function ViewerDashboard() {
             </div>
 
             {/* Middle Content Row: Data on left, Player image on right */}
-            <div style={{ zIndex: 20, display: 'flex', flexDirection: 'column', marginTop: '1.5rem', maxWidth: '65%' }}>
+            <div style={{ zIndex: 20, display: 'flex', flexDirection: 'column', marginTop: '1rem', maxWidth: '52%' }}>
               {/* Player Name */}
               <h1 style={{
-                fontSize: player.name.length > 15 ? '3.5rem' : '4.5rem',
+                fontSize: player.name.length > 18 ? '3rem' : (player.name.length > 13 ? '3.75rem' : '4.4rem'),
                 fontWeight: '900',
                 color: '#ffffff',
                 textTransform: 'uppercase',
-                letterSpacing: '0.02em',
-                margin: '0 0 1.5rem 0',
+                letterSpacing: '-0.02em',
+                margin: '0 0 1.25rem 0',
                 fontFamily: 'Outfit, sans-serif',
-                lineHeight: 1.05
+                lineHeight: 1.05,
+                textShadow: '0 4px 24px rgba(0, 0, 0, 0.6)'
               }}>
                 {player.name}
               </h1>
 
               {/* Badges Row */}
-              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '2.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '2.25rem' }}>
                 {/* Rating Badge */}
                 <div style={{
                   background: 'rgba(20, 27, 37, 0.85)',
@@ -1039,10 +883,11 @@ export default function ViewerDashboard() {
                   alignItems: 'center',
                   gap: '0.5rem',
                   fontSize: '0.88rem',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Inter, sans-serif',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)'
                 }}>
-                  <span style={{ color: 'var(--text-muted, #94a3b8)', fontWeight: '600', letterSpacing: '0.08em', fontSize: '0.78rem' }}>RATING</span>
-                  <span style={{ color: '#ffffff', fontWeight: '800' }}>{player.points || 57}</span>
+                  <span style={{ color: 'var(--text-muted, #94a3b8)', fontWeight: '700', letterSpacing: '0.08em', fontSize: '0.78rem' }}>RATING</span>
+                  <span style={{ color: 'var(--gold-bright, #f0cc5d)', fontWeight: '900', fontSize: '1rem' }}>{player.points || 85}</span>
                 </div>
 
                 {/* Nation Badge */}
@@ -1055,57 +900,69 @@ export default function ViewerDashboard() {
                   alignItems: 'center',
                   gap: '0.5rem',
                   fontSize: '0.88rem',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Inter, sans-serif',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)'
                 }}>
-                  <span style={{ color: 'var(--text-muted, #94a3b8)', fontWeight: '600', letterSpacing: '0.08em', fontSize: '0.78rem' }}>NATION</span>
-                  <span style={{ color: '#ffffff', fontWeight: '800', textTransform: 'uppercase' }}>{player.country || 'INDIA'}</span>
+                  <span style={{ color: 'var(--text-muted, #94a3b8)', fontWeight: '700', letterSpacing: '0.08em', fontSize: '0.78rem' }}>NATION</span>
+                  <span style={{ color: '#ffffff', fontWeight: '800', textTransform: 'uppercase' }}>
+                    {player.country === 'IND' ? 'INDIA' : (player.country || 'INDIA')}
+                  </span>
                 </div>
 
-                {/* Category Pill */}
-                <div style={{
-                  background: 'rgba(30, 41, 59, 0.7)',
-                  border: '1px solid rgba(96, 165, 250, 0.4)',
-                  borderRadius: '50px',
-                  padding: '0.45rem 1.4rem',
-                  color: '#93c5fd',
-                  fontWeight: '800',
-                  fontSize: '0.88rem',
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  fontFamily: 'Inter, sans-serif'
-                }}>
-                  {player.category ? `${(player.country && player.country.toLowerCase() !== 'india' ? 'OVERSEAS ' : '')}${player.category.replace('_', ' ')}` : 'OVERSEAS BOWLER'}
-                </div>
+                {/* Role / Category Pill - Fixed Overseas Detection */}
+                {(() => {
+                  const isOverseas = player.country && !['IND', 'INDIA', 'INDIAN'].includes(player.country.trim().toUpperCase());
+                  const roleText = player.category ? player.category.replace(/_/g, ' ') : 'PLAYER';
+                  return (
+                    <div style={{
+                      background: isOverseas ? 'rgba(30, 41, 59, 0.85)' : 'rgba(16, 50, 40, 0.85)',
+                      border: `1px solid ${isOverseas ? 'rgba(96, 165, 250, 0.45)' : 'rgba(52, 211, 153, 0.45)'}`,
+                      borderRadius: '50px',
+                      padding: '0.45rem 1.35rem',
+                      color: isOverseas ? '#93c5fd' : '#6ee7b7',
+                      fontWeight: '800',
+                      fontSize: '0.88rem',
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                      fontFamily: 'Inter, sans-serif',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)'
+                    }}>
+                      {isOverseas ? `OVERSEAS ${roleText}` : `INDIAN ${roleText}`}
+                    </div>
+                  );
+                })()}
               </div>
 
-              {/* Two-Column Stats Row: IPL DEBUT & BASE PRICE */}
-              <div style={{ display: 'flex', gap: '5rem', marginBottom: '3rem' }}>
+              {/* Two-Column Stats Row: AUCTION POOL & BASE PRICE */}
+              <div style={{ display: 'flex', gap: '4rem', marginBottom: '2.5rem', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{
                     color: 'var(--text-muted, #94a3b8)',
-                    fontSize: '0.8rem',
+                    fontSize: '0.78rem',
                     fontWeight: '700',
                     letterSpacing: '0.12em',
                     textTransform: 'uppercase',
                     marginBottom: '0.4rem',
                     fontFamily: 'JetBrains Mono, monospace'
                   }}>
-                    IPL DEBUT
+                    AUCTION POOL
                   </div>
                   <div style={{
-                    fontSize: '2.5rem',
+                    fontSize: '1.9rem',
                     fontWeight: '900',
                     color: '#ffffff',
-                    fontFamily: 'Outfit, sans-serif'
+                    fontFamily: 'Outfit, sans-serif',
+                    letterSpacing: '0.02em',
+                    textTransform: 'uppercase'
                   }}>
-                    {player.debut || 'N/A'}
+                    {player.pool || (player.category ? `${player.category.replace(/_/g, ' ')} SET` : 'GENERAL POOL')}
                   </div>
                 </div>
 
                 <div>
                   <div style={{
                     color: 'var(--text-muted, #94a3b8)',
-                    fontSize: '0.8rem',
+                    fontSize: '0.78rem',
                     fontWeight: '700',
                     letterSpacing: '0.12em',
                     textTransform: 'uppercase',
@@ -1115,10 +972,11 @@ export default function ViewerDashboard() {
                     BASE PRICE
                   </div>
                   <div style={{
-                    fontSize: '2.75rem',
+                    fontSize: '2.4rem',
                     fontWeight: '900',
                     color: 'var(--gold-bright, #f0cc5d)',
-                    fontFamily: 'Outfit, sans-serif'
+                    fontFamily: 'Outfit, sans-serif',
+                    textShadow: '0 2px 14px rgba(212, 175, 55, 0.3)'
                   }}>
                     ₹{((player.basePrice || 0) / 10000000).toFixed((player.basePrice || 0) % 10000000 === 0 ? 0 : 2)} CR
                   </div>
@@ -1127,23 +985,61 @@ export default function ViewerDashboard() {
 
               {/* Current Bid Box */}
               <div style={{
-                width: '360px',
-                background: 'rgba(10, 13, 18, 0.8)',
-                border: activeBid ? '1px solid var(--gold-border, rgba(212,175,55,0.4))' : '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '10px',
-                padding: '1.25rem 1.5rem',
-                boxShadow: activeBid ? '0 0 20px rgba(212, 175, 55, 0.15)' : 'none'
+                width: '380px',
+                maxWidth: '100%',
+                background: activeBid 
+                  ? 'linear-gradient(135deg, rgba(20, 27, 37, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)' 
+                  : 'rgba(12, 16, 23, 0.85)',
+                border: activeBid ? '1.5px solid var(--gold-border, rgba(212,175,55,0.6))' : '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '12px',
+                padding: '1.25rem 1.6rem',
+                boxShadow: activeBid ? '0 8px 30px rgba(212, 175, 55, 0.2)' : '0 4px 20px rgba(0,0,0,0.4)',
+                position: 'relative',
+                overflow: 'hidden'
               }}>
+                {activeBid && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: '3px',
+                    background: 'linear-gradient(90deg, #f0cc5d, #f59e0b, #d4af37)'
+                  }} />
+                )}
+
                 <div style={{
-                  color: 'var(--text-muted, #94a3b8)',
-                  fontSize: '0.78rem',
-                  fontWeight: '700',
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                  marginBottom: '0.5rem',
-                  fontFamily: 'JetBrains Mono, monospace'
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '0.6rem'
                 }}>
-                  CURRENT BID
+                  <span style={{
+                    color: activeBid ? 'var(--gold-bright, #f0cc5d)' : 'var(--text-muted, #94a3b8)',
+                    fontSize: '0.78rem',
+                    fontWeight: '800',
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    fontFamily: 'JetBrains Mono, monospace'
+                  }}>
+                    CURRENT HIGHEST BID
+                  </span>
+                  {activeBid && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.2rem 0.55rem',
+                      borderRadius: '12px',
+                      background: 'rgba(212, 175, 55, 0.15)',
+                      color: '#f0cc5d',
+                      fontSize: '0.7rem',
+                      fontWeight: '800',
+                      fontFamily: 'JetBrains Mono, monospace'
+                    }}>
+                      ● LEADING
+                    </span>
+                  )}
                 </div>
 
                 {activeBid ? (
@@ -1153,9 +1049,11 @@ export default function ViewerDashboard() {
                       fontWeight: '900',
                       color: 'var(--gold-bright, #f0cc5d)',
                       fontFamily: 'JetBrains Mono, monospace',
-                      lineHeight: 1.1
+                      lineHeight: 1.1,
+                      letterSpacing: '-0.02em',
+                      textShadow: '0 2px 10px rgba(212, 175, 55, 0.3)'
                     }}>
-                      ₹{(activeBid.amount / 10000000).toFixed(activeBid.amount % 10000000 === 0 ? 0 : 2)} CR
+                      ₹{(activeBid.amount / 10000000).toFixed(2)} Cr
                     </div>
                     <div style={{
                       fontSize: '1.05rem',
@@ -1163,65 +1061,85 @@ export default function ViewerDashboard() {
                       color: '#ffffff',
                       marginTop: '0.45rem',
                       fontFamily: 'Inter, sans-serif',
-                      letterSpacing: '0.02em'
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
                     }}>
-                      {activeBid.teamName || getTeamName(activeBid.teamId)}
+                      <span style={{ color: 'var(--text-muted, #94a3b8)', fontSize: '0.85rem', fontWeight: '600' }}>BY</span>
+                      <span>{getTeamName(activeBid.teamId)}</span>
                     </div>
                   </div>
                 ) : (
-                  <div>
+                  <div style={{
+                    padding: '0.5rem 0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.3rem'
+                  }}>
                     <div style={{
-                      fontSize: '1.75rem',
-                      fontWeight: '800',
-                      color: 'rgba(255, 255, 255, 0.55)',
-                      fontFamily: 'JetBrains Mono, monospace',
-                      lineHeight: 1.1
-                    }}>
-                      ₹{((player.basePrice || 0) / 10000000).toFixed((player.basePrice || 0) % 10000000 === 0 ? 0 : 2)} CR
-                    </div>
-                    <div style={{
-                      fontSize: '0.88rem',
-                      color: 'var(--text-muted, #94a3b8)',
-                      marginTop: '0.4rem',
-                      fontStyle: 'italic',
+                      fontSize: '1.05rem',
+                      color: 'var(--text-secondary, #cbd5e1)',
+                      fontWeight: '600',
                       fontFamily: 'Inter, sans-serif'
                     }}>
-                      Opening Bid (Awaiting Paddle)
+                      Waiting for opening bid...
+                    </div>
+                    <div style={{
+                      fontSize: '0.8rem',
+                      color: 'var(--text-muted, #64748b)',
+                      fontFamily: 'JetBrains Mono, monospace'
+                    }}>
+                      Starts at base price ₹{((player.basePrice || 0) / 10000000).toFixed((player.basePrice || 0) % 10000000 === 0 ? 0 : 2)} Cr
                     </div>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Player Image Render */}
+            {/* Player Stage Ambient Glow / Spotlight Aura behind cutout */}
+            <div style={{
+              position: 'absolute',
+              right: '0%',
+              bottom: '0',
+              width: '58%',
+              height: '95%',
+              background: 'radial-gradient(ellipse at 55% 65%, rgba(59, 130, 246, 0.18) 0%, rgba(212, 175, 55, 0.08) 45%, transparent 75%)',
+              pointerEvents: 'none',
+              zIndex: 4
+            }} />
+
+            {/* Player Cutout Image - Substantially enlarged & heroic standing */}
             <img 
               src={player.imageUrl || playerImageMap[player.name?.toLowerCase().replace(/[^a-z]/g, '')] || `/players/${(player.name || '').toLowerCase().replace(/ /g, '_')}.png`} 
               alt={player.name} 
               style={{ 
                 position: 'absolute',
                 bottom: 0,
-                right: '6%',
-                maxHeight: '92%',
-                maxWidth: '45%',
+                right: '1%',
+                height: '98%',
+                maxHeight: '98%',
+                maxWidth: '56%',
                 objectFit: 'contain',
+                objectPosition: 'bottom center',
                 zIndex: 10,
-                filter: 'drop-shadow(0 20px 40px rgba(0, 0, 0, 0.9))'
+                pointerEvents: 'none',
+                filter: 'drop-shadow(0 20px 45px rgba(0, 0, 0, 0.98)) drop-shadow(0 0 50px rgba(37, 99, 235, 0.25))'
               }}
               onError={(e) => {
                 e.target.style.display = 'none';
               }}
             />
 
-            {/* Red bottom-right corner accent */}
+            {/* Bottom floor vignette fade for seamless cutout transition */}
             <div style={{
               position: 'absolute',
-              bottom: '2.5rem',
-              right: '2.5rem',
-              width: '24px',
-              height: '24px',
-              borderBottom: '4px solid #ef4444',
-              borderRight: '4px solid #ef4444',
-              zIndex: 25
+              bottom: 0,
+              right: 0,
+              width: '58%',
+              height: '60px',
+              background: 'linear-gradient(to top, rgba(10, 13, 18, 0.95) 0%, transparent 100%)',
+              pointerEvents: 'none',
+              zIndex: 12
             }} />
           </div>
         ) : player && player.status === 'SOLD' ? (
@@ -1358,7 +1276,7 @@ export default function ViewerDashboard() {
           height: 'calc(100vh - 2.5rem)'
         }}>
           {renderSidebar()}
-          {(selectedLocationId || locations.length === 1) ? renderDetailedView() : renderGlobalView()}
+          {selectedLocationId ? renderDetailedView() : renderGlobalView()}
         </div>
       )}
 

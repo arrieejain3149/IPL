@@ -5,6 +5,39 @@ import playerImageMap from '../playerImageMap.json';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
+const isUnsoldPool = (poolStr) => {
+  if (!poolStr) return false;
+  const s = String(poolStr).trim().toLowerCase();
+  return s === 'unsold' || s.includes('unsold');
+};
+
+const getPoolNumber = (poolStr, category) => {
+  if (poolStr) {
+    if (isUnsoldPool(poolStr)) return 5;
+    const match = String(poolStr).match(/POOL\s*[-]?\s*(\d+)/i);
+    if (match) return parseInt(match[1], 10);
+  }
+  const cat = String(category || '').toUpperCase();
+  if (cat.includes('BAT')) return 1;
+  if (cat.includes('BOWL')) return 2;
+  if (cat.includes('ALL') || cat.includes('AR')) return 3;
+  if (cat.includes('KEEP') || cat.includes('WK')) return 4;
+  return 999;
+};
+
+const sortPlayersByPool = (a, b) => {
+  const poolA = getPoolNumber(a.pool, a.category);
+  const poolB = getPoolNumber(b.pool, b.category);
+  if (poolA !== poolB) return poolA - poolB;
+  if (a.pool && b.pool && a.pool !== b.pool) {
+    return a.pool.localeCompare(b.pool);
+  }
+  const orderA = typeof a.order === 'number' ? a.order : 999999;
+  const orderB = typeof b.order === 'number' ? b.order : 999999;
+  if (orderA !== orderB) return orderA - orderB;
+  return (a.name || '').localeCompare(b.name || '');
+};
+
 export default function AuctioneerDashboard({ locationIdOverride }) {
   const { user } = useAuth();
   const [locations, setLocations] = useState([]);
@@ -45,27 +78,17 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const [playerHistory, setPlayerHistory] = useState([]);
   const [auctionStartingCountdown, setAuctionStartingCountdown] = useState(null);
   const isResolvingRef = useRef(false);
-  const isMountedRef = useRef(true);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   // Synchronized 5-Second Global Countdown effect
   useEffect(() => {
     if (auctionStartingCountdown === null) return;
     if (auctionStartingCountdown > 0) {
       const timer = setTimeout(() => {
-        if (!isMountedRef.current) return;
         setAuctionStartingCountdown(prev => (prev > 0 ? prev - 1 : 0));
       }, 1000);
       return () => clearTimeout(timer);
     } else if (auctionStartingCountdown === 0) {
       const timer = setTimeout(() => {
-        if (!isMountedRef.current) return;
         setAuctionStartingCountdown(null);
         // Commence auction with the first player lot
         advanceNextPlayer();
@@ -180,7 +203,6 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       if (res.ok) {
         setShowResetModal(false);
         setResetConfirmInput('');
-        setAuctionStartingCountdown(null);
         setAutoAdvanceCountdown(null);
         isResolvingRef.current = false;
         setAutoPilotEnabled(false);
@@ -194,8 +216,6 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         setTimerDeadline(null);
         setTimerSecondsLeft(null);
         fetchTeams();
-        socket.emitLocal('livePlayerCleared', { locationId: selectedLocation });
-        socket.emitLocal('livePlayerUpdated', null);
         alert('Auction reset completed successfully.');
       }
     } catch (err) {
@@ -248,12 +268,18 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         amount
       });
       setLivePlayer(prev => prev ? { ...prev, status: 'SOLD', soldPrice: amount } : null);
+      setPlayers(prev => prev.filter(p => p.id !== livePlayer.id));
     } else {
       socket.emit('unsoldPlayer', {
         locationId: selectedLocation,
         playerId: livePlayer.id
       });
-      setLivePlayer(prev => prev ? { ...prev, status: 'UNSOLD' } : null);
+      const unsoldPlayer = { ...livePlayer, status: 'UNSOLD', pool: 'Unsold' };
+      setLivePlayer(unsoldPlayer);
+      setPlayers(prev => {
+        const without = prev.filter(p => p.id !== livePlayer.id);
+        return [...without, unsoldPlayer].sort(sortPlayersByPool);
+      });
     }
 
     if (autoPilotEnabled) {
@@ -266,45 +292,96 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     if (autoAdvanceCountdown === null) return;
     if (autoAdvanceCountdown > 0) {
       const timerId = setTimeout(() => {
-        if (!isMountedRef.current) return;
         setAutoAdvanceCountdown(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
       }, 1000);
       return () => clearTimeout(timerId);
     } else if (autoAdvanceCountdown === 0) {
       setAutoAdvanceCountdown(null);
       isResolvingRef.current = false;
-      if (!isMountedRef.current) return;
-      
-      // Look for next pending player in the filtered slot
-      const remainingInSlot = players.filter(p => 
-        (poolFilter === 'ALL' || p.pool === poolFilter) &&
-        p.id !== livePlayer?.id &&
-        p.status === 'UPCOMING'
-      );
-
-      if (remainingInSlot.length > 0) {
-        advanceNextPlayer(remainingInSlot[0].id);
-      } else {
-        setSlotCompletedNotice(true);
-      }
+      advanceNextPlayer();
     }
-  }, [autoAdvanceCountdown, players, poolFilter, livePlayer]);
+  }, [autoAdvanceCountdown]);
 
   const advanceNextPlayer = async (targetId) => {
-    if (!isMountedRef.current || !selectedLocation) return;
+    if (!selectedLocation) return;
     try {
       // Record current live player into player history before advancing
       if (livePlayer && (!playerHistory.length || playerHistory[playerHistory.length - 1].id !== livePlayer.id)) {
         setPlayerHistory(prev => [...prev, livePlayer]);
       }
 
-      const upcomingPool = players.filter(p => 
-        (poolFilter === 'ALL' || p.pool === poolFilter) && 
-        p.status === 'UPCOMING' &&
-        p.id !== livePlayer?.id
-      );
+      // 1. Separate regular pool upcoming players (Pools 1 to 4) from the Unsold pool
+      const regularPoolPlayers = players
+        .filter(p => p.status === 'UPCOMING' && p.id !== livePlayer?.id && !isUnsoldPool(p.pool))
+        .sort(sortPlayersByPool);
 
-      const nextCandidate = targetId || upcomingPool[0]?.id || players.find(p => p.status === 'UPCOMING')?.id;
+      const unsoldPoolPlayers = players
+        .filter(p => (isUnsoldPool(p.pool) || p.status === 'UNSOLD') && p.status !== 'SOLD' && p.id !== livePlayer?.id)
+        .sort(sortPlayersByPool);
+
+      // Priority: Finish all regular pools (Pools 1 to 4) first!
+      // Once all regular pools are completed by auto-pilot, the Unsold pool comes next!
+      const availablePlayers = regularPoolPlayers.length > 0
+        ? regularPoolPlayers
+        : unsoldPoolPlayers;
+
+      if (availablePlayers.length === 0 && !targetId) {
+        setSlotCompletedNotice(true);
+        return;
+      }
+
+      let nextCandidate = targetId;
+
+      if (!nextCandidate) {
+        // Sequential Pool Progression:
+        // Priority 1: If user explicitly selected a specific poolFilter (not 'ALL'), prefer that
+        // Priority 2: Follow current livePlayer's pool
+        let activePool = null;
+        if (poolFilter && poolFilter !== 'ALL') {
+          activePool = poolFilter;
+        } else if (livePlayer && livePlayer.pool) {
+          activePool = livePlayer.pool;
+        }
+
+        // Determine candidate pool source
+        let poolSource = availablePlayers;
+        if (isUnsoldPool(activePool)) {
+          poolSource = unsoldPoolPlayers;
+        }
+
+        let candidatesInPool = activePool
+          ? poolSource.filter(p => isUnsoldPool(activePool) ? (isUnsoldPool(p.pool) || p.status === 'UNSOLD') : p.pool === activePool)
+          : [];
+
+        // If active pool is exhausted:
+        // Automatically transition to the next pool in sequence!
+        if (candidatesInPool.length === 0) {
+          const uniqueRemainingPools = [];
+          for (const p of availablePlayers) {
+            const pPool = isUnsoldPool(p.pool) ? 'Unsold' : (p.pool || 'Unassigned');
+            if (!uniqueRemainingPools.includes(pPool)) {
+              uniqueRemainingPools.push(pPool);
+            }
+          }
+
+          if (uniqueRemainingPools.length > 0) {
+            const nextPool = uniqueRemainingPools[0];
+            candidatesInPool = availablePlayers.filter(p => isUnsoldPool(nextPool) ? (isUnsoldPool(p.pool) || p.status === 'UNSOLD') : (p.pool || 'Unassigned') === nextPool);
+            if (poolFilter !== 'ALL') {
+              setPoolFilter(nextPool);
+            }
+          }
+        }
+
+        if (candidatesInPool.length > 0) {
+          nextCandidate = candidatesInPool[0].id;
+        } else if (availablePlayers.length > 0) {
+          nextCandidate = availablePlayers[0].id;
+        } else {
+          setSlotCompletedNotice(true);
+          return;
+        }
+      }
 
       if (!nextCandidate) {
         setSlotCompletedNotice(true);
@@ -397,7 +474,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       // Ensure previous player is in local player list if not already
       setPlayers(prev => {
         if (!prev.some(p => p.id === loadedPlayer.id)) {
-          return [loadedPlayer, ...prev];
+          return [loadedPlayer, ...prev].sort(sortPlayersByPool);
         }
         return prev;
       });
@@ -413,19 +490,30 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
         .then(res => res.json())
         .then(data => {
-          const live = data.find(p => p.status === 'LIVE');
+          const sorted = [...data].sort(sortPlayersByPool);
+          const live = sorted.find(p => p.status === 'LIVE');
           setLivePlayer(live || null);
           if (live) {
             setCurrentBid(live.currentBid || live.basePrice);
             setBiddingTeam(live.currentBidTeamId || '');
           }
-          setPlayers(data.filter(p => p.status === 'UPCOMING'));
+          // Include all lots available for auction (UPCOMING and UNSOLD lots, excluding current live)
+          setPlayers(sorted.filter(p => p.status !== 'SOLD' && p.id !== live?.id));
         })
         .catch(console.error);
 
       socket.on('playerSold', (player) => {
         setLastSoldPlayer(player);
         fetchTeams(); 
+        setPlayers(prev => prev.filter(p => p.id !== player.id));
+      });
+
+      socket.on('playerUnsold', (unsoldPlayer) => {
+        const unsoldItem = { ...unsoldPlayer, pool: 'Unsold', status: 'UNSOLD' };
+        setPlayers(prev => {
+          const without = prev.filter(p => p.id !== unsoldPlayer.id);
+          return [...without, unsoldItem].sort(sortPlayersByPool);
+        });
       });
 
       socket.on('penaltyIssued', (data) => {
@@ -476,7 +564,6 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       });
 
       socket.on('auctionReset', () => {
-        setAuctionStartingCountdown(null);
         setAutoAdvanceCountdown(null);
         isResolvingRef.current = false;
         setAutoPilotEnabled(false);
@@ -492,29 +579,22 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
         fetchTeams();
         fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
           .then(res => res.json())
-          .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
-          .catch(console.error);
-      });
-
-      socket.on('playersLoaded', () => {
-        fetch(`${API_URL}/api/locations/${selectedLocation}/players`)
-          .then(res => res.json())
-          .then(data => setPlayers(data.filter(p => p.status === 'UPCOMING')))
+          .then(data => {
+            const sorted = [...data].sort(sortPlayersByPool);
+            setPlayers(sorted.filter(p => p.status === 'UPCOMING'));
+          })
           .catch(console.error);
       });
 
       return () => {
-        setAuctionStartingCountdown(null);
-        setAutoAdvanceCountdown(null);
-        isResolvingRef.current = false;
         socket.off('playerSold');
+        socket.off('playerUnsold');
         socket.off('penaltyIssued');
         socket.off('playerReopened');
         socket.off('timerUpdated');
         socket.off('auctionStarting');
         socket.off('auctionBreakToggled');
         socket.off('auctionReset');
-        socket.off('playersLoaded');
       };
     }
   }, [selectedLocation]);
@@ -522,6 +602,10 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const bringToLot = (player) => {
     if (livePlayer && livePlayer.id !== player.id) {
       setPlayerHistory(prev => [...prev.filter(p => p.id !== livePlayer.id), livePlayer]);
+    }
+    // If the auctioneer explicitly loads a player from another pool, sync poolFilter if a specific pool was active
+    if (player.pool && poolFilter !== 'ALL') {
+      setPoolFilter(player.pool);
     }
     advanceNextPlayer(player.id);
   };
@@ -577,6 +661,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       amount
     });
     setLivePlayer({ ...livePlayer, status: 'SOLD', soldPrice: amount });
+    setPlayers(prev => prev.filter(p => p.id !== livePlayer.id));
     if (autoPilotEnabled) {
       setAutoAdvanceCountdown(3);
     }
@@ -587,7 +672,12 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       locationId: selectedLocation,
       playerId: livePlayer.id
     });
-    setLivePlayer({ ...livePlayer, status: 'UNSOLD' });
+    const unsoldPlayer = { ...livePlayer, status: 'UNSOLD', pool: 'Unsold' };
+    setLivePlayer(unsoldPlayer);
+    setPlayers(prev => {
+      const without = prev.filter(p => p.id !== livePlayer.id);
+      return [...without, unsoldPlayer].sort(sortPlayersByPool);
+    });
     if (autoPilotEnabled) {
       setAutoAdvanceCountdown(3);
     }
@@ -1033,7 +1123,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
             )}
           </div>
           
-          {players.some(p => p.pool) && (
+          {players.some(p => p.pool || p.status === 'UNSOLD') && (
             <select 
               value={poolFilter} 
               onChange={(e) => setPoolFilter(e.target.value)}
@@ -1041,15 +1131,8 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
               style={{ padding: '0.45rem', fontSize: '0.8rem', marginBottom: '0.5rem' }}
             >
               <option value="ALL">ALL PLAYER CATEGORIES</option>
-              {[...new Set(players.filter(p => p.pool).map(p => p.pool))]
-                .sort((a, b) => {
-                  const getPoolNumber = (poolStr) => {
-                    if (!poolStr) return 999;
-                    const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
-                    return match ? parseInt(match[1], 10) : 999;
-                  };
-                  return getPoolNumber(a) - getPoolNumber(b);
-                })
+              {[...new Set(players.map(p => isUnsoldPool(p.pool) || p.status === 'UNSOLD' ? 'Unsold' : (p.pool || 'Unassigned')))]
+                .sort((a, b) => getPoolNumber(a) - getPoolNumber(b))
                 .map(pool => (
                 <option key={pool} value={pool}>{pool}</option>
               ))}
@@ -1118,8 +1201,8 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
           {(() => {
             const rawQuery = searchQuery.trim().toLowerCase();
             
-            // 1. Filter by current pool selection
-            const inPool = players.filter(p => poolFilter === 'ALL' || p.pool === poolFilter);
+            // 1. Filter by current pool selection (including Unsold pool)
+            const inPool = players.filter(p => poolFilter === 'ALL' || (isUnsoldPool(poolFilter) ? (isUnsoldPool(p.pool) || p.status === 'UNSOLD') : p.pool === poolFilter));
 
             // 2. Filter by search query (prioritizing prefix matching)
             const filteredPlayers = inPool.filter(p => {
@@ -1148,16 +1231,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                 return a.name.localeCompare(b.name);
               }
 
-              // Normal pool sorting
-              const getPoolNumber = (poolStr) => {
-                if (!poolStr) return 999;
-                const match = poolStr.match(/POOL\s*[-]?\s*(\d+)/i);
-                return match ? parseInt(match[1], 10) : 999;
-              };
-              const poolNumA = getPoolNumber(a.pool);
-              const poolNumB = getPoolNumber(b.pool);
-              if (poolNumA !== poolNumB) return poolNumA - poolNumB;
-              return a.name.localeCompare(b.name);
+              return sortPlayersByPool(a, b);
             });
 
             return (
@@ -1199,7 +1273,23 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <img src={getAvatar(p.name, p.imageUrl)} style={{ width: '28px', height: '28px', borderRadius: '4px', objectFit: 'cover' }} alt="" />
                         <div>
-                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffffff' }}>{p.name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffffff' }}>{p.name}</div>
+                            {(isUnsoldPool(p.pool) || p.status === 'UNSOLD') && (
+                              <span style={{ 
+                                fontSize: '0.62rem', 
+                                padding: '0.1rem 0.35rem', 
+                                borderRadius: '3px', 
+                                background: 'rgba(239, 68, 68, 0.18)', 
+                                color: '#f87171', 
+                                border: '1px solid rgba(239, 68, 68, 0.35)', 
+                                fontWeight: '800',
+                                letterSpacing: '0.04em'
+                              }}>
+                                UNSOLD
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
                             ₹{(p.basePrice / 10000000).toFixed(2)} Cr
                           </div>
@@ -1487,10 +1577,10 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                     className="btn btn-gold" 
                     onClick={() => {
                       setSlotCompletedNotice(false);
-                      setPoolFilter('ALL');
+                      advanceNextPlayer();
                     }}
                   >
-                    VIEW ALL REMAINING LOTS
+                    {players.filter(p => p.status === 'UPCOMING').length === 0 ? 'VIEW ALL REMAINING LOTS' : 'PROCEED TO NEXT CATEGORY ▶'}
                   </button>
                 </div>
               ) : (
@@ -1546,7 +1636,15 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                   </div>
 
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                    Active Slot: <strong style={{ color: 'var(--gold-bright)' }}>{poolFilter}</strong> ({players.filter(p => poolFilter === 'ALL' || p.pool === poolFilter).length} upcoming lots available)
+                    Active Category: <strong style={{ color: 'var(--gold-bright)' }}>
+                      {poolFilter === 'ALL' 
+                        ? (players.find(p => p.status === 'UPCOMING' && !isUnsoldPool(p.pool))?.pool || (players.some(p => isUnsoldPool(p.pool) || p.status === 'UNSOLD') ? 'Unsold' : 'All Categories')) 
+                        : poolFilter}
+                    </strong> ({players.filter(p => poolFilter === 'ALL' 
+                      ? (players.some(x => x.status === 'UPCOMING' && !isUnsoldPool(x.pool)) 
+                          ? p.pool === players.find(x => x.status === 'UPCOMING' && !isUnsoldPool(x.pool))?.pool 
+                          : (isUnsoldPool(p.pool) || p.status === 'UNSOLD')) 
+                      : (isUnsoldPool(poolFilter) ? (isUnsoldPool(p.pool) || p.status === 'UNSOLD') : p.pool === poolFilter)).length} available lots)
                   </div>
                 </>
               )}

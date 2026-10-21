@@ -123,8 +123,8 @@ async function seed() {
     }
   }
 
-  // 5. Seed Real Players (All 211 unique players directly into main_arena)
-  console.log('Seeding 211 Unique Players into the Single Arena...');
+  // 5. Seed Real Players (All 220 unique players directly into main_arena)
+  console.log('Seeding 220 Unique Players into the Single Arena...');
   const mapPath = path.resolve(__dirname, '../client/src/playerImageMap.json');
   let imageMap = {};
   if (fs.existsSync(mapPath)) {
@@ -171,7 +171,7 @@ async function seed() {
   console.log(`- Created 1 authoritative venue: IPL Mega Auction Arena 2026`);
   console.log(`- Created all 10 franchises competing in the same arena with ₹90 Cr purse`);
   console.log(`- Created admin, auctioneer, and manager logins for all 10 teams`);
-  console.log(`- Seeded all 211 unique players once (no venue duplication)`);
+  console.log(`- Seeded all 220 unique players once (no venue duplication)`);
 }
 
 seed()
