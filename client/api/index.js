@@ -59,6 +59,13 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // Ensure seamless routing whether invoked directly as Cloud Function (/login) or via proxy (/api/login)
 app.use((req, res, next) => {
   if (!req.url.startsWith('/api') && req.url !== '/' && !req.url.startsWith('/?')) {
@@ -75,7 +82,7 @@ const sseClients = new Map();
 // High-Speed Server In-Memory Cache (0ms latency responses)
 const memoryCache = new Map();
 
-function getCached(key, ttlMs = 15000) {
+function getCached(key, ttlMs = 1000) {
   const item = memoryCache.get(key);
   if (!item) return null;
   if (Date.now() - item.timestamp > ttlMs) {
@@ -227,7 +234,7 @@ app.post('/api/login', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/teams', async (req, res) => {
   try {
-    const cached = getCached('teams_all', 10000);
+    const cached = getCached('teams_all', 1000);
     if (cached) return res.json(cached);
 
     const [teamsSnap, playersSnap] = await Promise.all([
@@ -299,7 +306,7 @@ app.put('/api/teams/:id/disqualify', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/locations', async (req, res) => {
   try {
-    const cached = getCached('locations_all', 10000);
+    const cached = getCached('locations_all', 1000);
     if (cached) return res.json(cached);
 
     const [locationsSnap, teamsSnap, usersSnap, playersSnap] = await Promise.all([
@@ -347,7 +354,7 @@ app.get('/api/locations', async (req, res) => {
       usersByLoc.set(data.locationId, list);
     });
 
-    const locations = locationsSnap.docs.map((doc) => ({
+    const locations = locationsSnap.docs.filter((doc) => doc.id === 'main_arena').map((doc) => ({
       id: doc.id,
       ...doc.data(),
       teams: teamsByLoc.get(doc.id) || [],
@@ -461,7 +468,6 @@ app.post('/api/locations', async (req, res) => {
     });
 
     await batch.commit();
-    broadcastEvent('global', 'locationCreated', { id: locationRef.id, name: normalizedName });
     res.json({ id: locationRef.id, name: normalizedName });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -491,6 +497,39 @@ app.delete('/api/locations/:id', async (req, res) => {
   }
 });
 
+const isUnsoldPool = (poolStr) => {
+  if (!poolStr) return false;
+  const s = String(poolStr).trim().toLowerCase();
+  return s === 'unsold' || s.includes('unsold');
+};
+
+const getPoolNumber = (poolStr, category) => {
+  if (poolStr) {
+    if (isUnsoldPool(poolStr)) return 5;
+    const match = String(poolStr).match(/POOL\s*[-]?\s*(\d+)/i);
+    if (match) return parseInt(match[1], 10);
+  }
+  const cat = String(category || '').toUpperCase();
+  if (cat.includes('BAT')) return 1;
+  if (cat.includes('BOWL')) return 2;
+  if (cat.includes('ALL') || cat.includes('AR')) return 3;
+  if (cat.includes('KEEP') || cat.includes('WK')) return 4;
+  return 999;
+};
+
+const sortPlayersByPool = (a, b) => {
+  const poolA = getPoolNumber(a.pool, a.category);
+  const poolB = getPoolNumber(b.pool, b.category);
+  if (poolA !== poolB) return poolA - poolB;
+  if (a.pool && b.pool && a.pool !== b.pool) {
+    return a.pool.localeCompare(b.pool);
+  }
+  const orderA = typeof a.order === 'number' ? a.order : 999999;
+  const orderB = typeof b.order === 'number' ? b.order : 999999;
+  if (orderA !== orderB) return orderA - orderB;
+  return (a.name || '').localeCompare(b.name || '');
+};
+
 app.get('/api/locations/:locationId/players', async (req, res) => {
   try {
     const locationId = req.params.locationId;
@@ -514,6 +553,8 @@ app.get('/api/locations/:locationId/players', async (req, res) => {
         team: data.teamId ? teamsMap.get(String(data.teamId)) || null : null,
       };
     });
+
+    players.sort(sortPlayersByPool);
 
     setCache(cacheKey, players);
     res.json(players);
@@ -545,6 +586,8 @@ app.get('/api/players', async (req, res) => {
         team: data.teamId ? teamsMap.get(String(data.teamId)) || null : null,
       };
     });
+
+    players.sort(sortPlayersByPool);
 
     setCache(cacheKey, players);
     res.json(players);
@@ -608,8 +651,6 @@ app.post('/api/players/bulk-global', async (req, res) => {
     if (ops > 0) {
       await batch.commit();
     }
-
-    broadcastEvent('global', 'playersLoaded', { count, locationsCount: locationsSnap.size });
 
     res.json({ success: true, count, locationsCount: locationsSnap.size });
   } catch (err) {
@@ -767,19 +808,43 @@ app.post('/api/auction/set-live', async (req, res) => {
 
     let targetPlayerId = playerId;
 
-    // If no playerId provided, select the next UPCOMING player
+    // If no playerId provided, select the next player by pool sequence
     if (!targetPlayerId) {
-      const nextSnap = await db
+      // 1. Regular pools (Pools 1 to 4)
+      const upcomingSnap = await db
         .collection('players')
         .where('locationId', '==', locationId)
         .where('status', '==', 'UPCOMING')
-        .limit(1)
         .get();
 
-      if (nextSnap.empty) {
-        return res.status(400).json({ error: 'No upcoming players in the queue' });
+      let candidateDocs = upcomingSnap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((p) => !isUnsoldPool(p.pool));
+
+      // 2. If all regular pools (pools 1-4) are completed, check for players in the Unsold pool
+      if (candidateDocs.length === 0) {
+        const unsoldSnap = await db
+          .collection('players')
+          .where('locationId', '==', locationId)
+          .where('status', '==', 'UNSOLD')
+          .get();
+
+        const unsoldDocs = unsoldSnap.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }));
+
+        const upcomingUnsoldDocs = upcomingSnap.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((p) => isUnsoldPool(p.pool));
+
+        candidateDocs = [...unsoldDocs, ...upcomingUnsoldDocs];
       }
-      targetPlayerId = nextSnap.docs[0].id;
+
+      if (candidateDocs.length === 0) {
+        return res.status(400).json({ error: 'No upcoming or unsold players in the queue' });
+      }
+
+      candidateDocs.sort(sortPlayersByPool);
+      targetPlayerId = candidateDocs[0].id;
     }
 
     const duration = Number(durationSeconds) || 30;
@@ -802,6 +867,7 @@ app.post('/api/auction/set-live', async (req, res) => {
       if (d.id !== targetPlayerId) {
         batch.update(d.ref, {
           status: 'UNSOLD',
+          pool: 'Unsold',
           updatedAt: now,
         });
       }
@@ -810,8 +876,8 @@ app.post('/api/auction/set-live', async (req, res) => {
     batch.update(playerRef, {
       status: 'LIVE',
       locationId: String(locationId),
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration,
+      timerDeadlineMs: null,
+      timerDurationSeconds: null,
       currentBid: null,
       currentBidTeamId: null,
       currentBidId: null,
@@ -821,10 +887,10 @@ app.post('/api/auction/set-live', async (req, res) => {
     batch.update(locationRef, {
       activePlayerId: targetPlayerId,
       auctionStatus: 'LIVE',
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration,
+      timerDeadlineMs: null,
+      timerDurationSeconds: null,
       timerPaused: false,
-      timerRemainingMs: duration * 1000,
+      timerRemainingMs: null,
       updatedAt: now,
     });
 
@@ -835,17 +901,17 @@ app.post('/api/auction/set-live', async (req, res) => {
       id: updated.id, 
       ...updated.data(), 
       locationId: String(locationId),
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration 
+      timerDeadlineMs: null,
+      timerDurationSeconds: null
     };
     await logAuditEvent('ADVANCE_PLAYER', { playerId: targetPlayerId, durationSeconds: duration }, locationId);
     broadcastEvent(locationId, 'livePlayerUpdated', livePlayerData);
     broadcastEvent(locationId, 'timerUpdated', { 
       locationId, 
-      deadlineMs, 
-      durationSeconds: duration, 
+      deadlineMs: null,
+      durationSeconds: null, 
       paused: false,
-      remainingMs: duration * 1000 
+      remainingMs: null 
     });
 
     res.json(livePlayerData);
@@ -976,55 +1042,51 @@ app.post('/api/auction/timer', async (req, res) => {
 app.post('/api/auction/reset', async (req, res) => {
   try {
     const { locationId, confirmText } = req.body;
-    if (confirmText && confirmText !== 'RESET') {
+    if (confirmText !== 'RESET') {
       return res.status(400).json({ error: 'Please confirm reset by providing confirmText: "RESET"' });
     }
     const locId = locationId || 'main_arena';
 
-    let batch = db.batch();
-    let ops = 0;
-
-    const commitIfFull = async () => {
-      ops++;
-      if (ops >= 400) {
-        await batch.commit();
-        batch = db.batch();
-        ops = 0;
-      }
+    const getInitialPool = (category) => {
+      const cat = String(category || '').toUpperCase();
+      if (cat.includes('BAT')) return 'POOL-1 Batsman';
+      if (cat.includes('BOWL')) return 'POOL-2 Bowler';
+      if (cat.includes('ALL') || cat.includes('AR')) return 'POOL-3 All-Rounder';
+      if (cat.includes('KEEP') || cat.includes('WK')) return 'POOL-4 Wicket-Keeper';
+      return 'POOL-1 Batsman';
     };
 
-    // 1. Reset all players in this location to UPCOMING
+    // 1. Reset all players in this location to UPCOMING and restore their original pool
     const playersSnap = await db.collection('players').where('locationId', '==', locId).get();
-    for (const doc of playersSnap.docs) {
+    const batch = db.batch();
+    playersSnap.forEach((doc) => {
+      const p = doc.data();
       batch.update(doc.ref, {
         status: 'UPCOMING',
+        pool: getInitialPool(p.category),
         currentBid: null,
         currentBidTeamId: null,
         currentBidId: null,
         soldPrice: null,
         teamId: null,
-        timerDeadlineMs: null,
-        timerPaused: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      await commitIfFull();
-    }
+    });
 
     // 2. Reset all team budgets
     const teamsSnap = await db.collection('teams').where('locationId', '==', locId).get();
-    for (const doc of teamsSnap.docs) {
+    teamsSnap.forEach((doc) => {
       batch.update(doc.ref, {
         budget: DEFAULT_PURSE,
         mistakes: 0,
         isDisqualified: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      await commitIfFull();
-    }
+    });
 
     // 3. Reset location state
     const locRef = db.collection('locations').doc(locId);
-    batch.set(locRef, {
+    batch.update(locRef, {
       activePlayerId: null,
       auctionStatus: 'UPCOMING',
       timerDeadlineMs: null,
@@ -1033,19 +1095,15 @@ app.post('/api/auction/reset', async (req, res) => {
       isOnBreak: false,
       leaderboardVisible: false,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    await commitIfFull();
+    });
 
     // 4. Delete all bids in this location
     const bidsSnap = await db.collection('bids').where('locationId', '==', locId).get();
-    for (const doc of bidsSnap.docs) {
+    bidsSnap.forEach((doc) => {
       batch.delete(doc.ref);
-      await commitIfFull();
-    }
+    });
 
-    if (ops > 0) {
-      await batch.commit();
-    }
+    await batch.commit();
 
     invalidateCache();
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
@@ -1094,10 +1152,11 @@ app.post('/api/bids', async (req, res) => {
       const teamData = teamDoc.data();
       const locationData = locationDoc.exists ? locationDoc.data() : {};
 
-      // 1. Authoritative Timer State Validation
+      // 1. Authoritative Timer Deadline Validation
       if (locationData.timerPaused) {
         throw new Error('Auction bidding is currently paused by the auctioneer');
       }
+      // Timer deadline removed: bidding closed manually by auctioneer
 
       // 2. Player Status Validation
       if (playerData.status !== 'LIVE') {
@@ -1151,22 +1210,13 @@ app.post('/api/bids', async (req, res) => {
       }
 
       // 4. Increment and Current Price Validation
-      if (playerData.currentBid) {
-        const currentBidNum = Number(playerData.currentBid);
-        if (numAmount <= currentBidNum) {
-          throw new Error(`Bid must exceed current bid of ₹${(currentBidNum / 10_000_000).toFixed(2)} Cr`);
-        }
-      } else {
-        const basePriceNum = Number(playerData.basePrice || 0);
-        if (numAmount < basePriceNum) {
-          throw new Error(`Opening bid must be at least the base price of ₹${(basePriceNum / 10_000_000).toFixed(2)} Cr`);
-        }
+      const currentPrice = Number(playerData.currentBid || playerData.basePrice || 0);
+      if (numAmount <= currentPrice) {
+        throw new Error(`Bid must exceed current price of ₹${(currentPrice / 10_000_000).toFixed(2)} Cr`);
       }
 
       const bidRef = db.collection('bids').doc();
       const now = admin.firestore.FieldValue.serverTimestamp();
-      const durationSeconds = Number(locationData.timerDurationSeconds) || 30;
-      const newDeadlineMs = nowMs + durationSeconds * 1000;
 
       transaction.set(bidRef, {
         locationId,
@@ -1183,15 +1233,6 @@ app.post('/api/bids', async (req, res) => {
         currentBidTeamId: teamId,
         currentBidTeamName: teamData.name || teamData.shortName,
         currentBidId: bidRef.id,
-        timerDeadlineMs: newDeadlineMs,
-        timerPaused: false,
-        updatedAt: now,
-      });
-
-      transaction.update(locationRef, {
-        timerDeadlineMs: newDeadlineMs,
-        timerPaused: false,
-        timerRemainingMs: durationSeconds * 1000,
         updatedAt: now,
       });
 
@@ -1202,20 +1243,11 @@ app.post('/api/bids', async (req, res) => {
         teamName: teamData.name || teamData.shortName,
         amount: numAmount,
         locationId,
-        newDeadlineMs,
-        durationSeconds
       };
     });
 
     await logAuditEvent('NEW_BID', result, locationId);
     broadcastEvent(locationId, 'newBid', result);
-    broadcastEvent(locationId, 'timerUpdated', {
-      locationId,
-      deadlineMs: result.newDeadlineMs,
-      paused: false,
-      remainingMs: result.durationSeconds * 1000,
-      durationSeconds: result.durationSeconds
-    });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1349,6 +1381,7 @@ app.post('/api/auction/unsold', async (req, res) => {
     await db.runTransaction(async (transaction) => {
       transaction.update(playerRef, {
         status: 'UNSOLD',
+        pool: 'Unsold',
         currentBid: null,
         currentBidTeamId: null,
         updatedAt: now,

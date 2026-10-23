@@ -72,21 +72,7 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
     }
   }, [auctionStartingCountdown]);
 
-  // Local ticker derived from server deadline
-  useEffect(() => {
-    if (!timerDeadline || timerPaused) return;
 
-    const interval = setInterval(() => {
-      const remainingMs = timerDeadline - Date.now();
-      const sec = Math.max(0, Math.ceil(remainingMs / 1000));
-      setTimerSecondsLeft(sec);
-      if (remainingMs <= 0) {
-        clearInterval(interval);
-      }
-    }, 200);
-
-    return () => clearInterval(interval);
-  }, [timerDeadline, timerPaused]);
 
   // Fetch teams and match the authenticated user's exact team
   useEffect(() => {
@@ -786,11 +772,9 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        {timerSecondsLeft !== null && (
-                          <div className={`${styles.pbTimerBadge} ${timerPaused ? styles.pbTimerPaused : (timerSecondsLeft <= 5 ? styles.pbTimerWarning : '')}`}>
-                            {timerPaused ? 'TIMER PAUSED' : `${timerSecondsLeft}s REMAINING`}
-                          </div>
-                        )}
+                        <div className={`${styles.pbTimerBadge} ${timerPaused ? styles.pbTimerPaused : ''}`}>
+                          {timerPaused ? 'BIDDING PAUSED' : 'BIDDING OPEN'}
+                        </div>
                         <span className={`badge ${livePlayer.status === 'LIVE' ? 'badge-live' : livePlayer.status === 'SOLD' ? 'badge-sold' : 'badge-unsold'}`}>
                           {livePlayer.status}
                         </span>
@@ -1204,20 +1188,18 @@ export default function TeamLeaderDashboard({ forcedTeamId }) {
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      {timerSecondsLeft !== null && (
-                        <div style={{
-                          padding: '0.25rem 0.65rem',
-                          background: timerPaused ? 'var(--amber-surface)' : (timerSecondsLeft <= 5 ? 'var(--crimson-surface)' : 'rgba(255,255,255,0.06)'),
-                          border: `1px solid ${timerPaused ? 'var(--amber-border)' : (timerSecondsLeft <= 5 ? 'var(--crimson-border)' : 'rgba(255,255,255,0.1)')}`,
-                          borderRadius: '4px',
-                          fontFamily: 'JetBrains Mono, monospace',
-                          fontSize: '0.8rem',
-                          fontWeight: '800',
-                          color: timerPaused ? 'var(--amber-warning)' : (timerSecondsLeft <= 5 ? 'var(--crimson-danger)' : 'var(--gold-bright)')
-                        }}>
-                          {timerPaused ? 'TIMER PAUSED' : `${timerSecondsLeft}s REMAINING`}
-                        </div>
-                      )}
+                      <div style={{
+                        padding: '0.25rem 0.65rem',
+                        background: timerPaused ? 'var(--amber-surface)' : 'rgba(0, 230, 160, 0.12)',
+                        border: `1px solid ${timerPaused ? 'var(--amber-border)' : 'rgba(0, 230, 160, 0.4)'}`,
+                        borderRadius: '4px',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: '0.8rem',
+                        fontWeight: '800',
+                        color: timerPaused ? 'var(--amber-warning)' : '#00e6a0'
+                      }}>
+                        {timerPaused ? 'BIDDING PAUSED' : 'BIDDING OPEN'}
+                      </div>
                       <span className={`badge ${livePlayer.status === 'LIVE' ? 'badge-live' : livePlayer.status === 'SOLD' ? 'badge-sold' : 'badge-unsold'}`}>
                         {livePlayer.status}
                       </span>

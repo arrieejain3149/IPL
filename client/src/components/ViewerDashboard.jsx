@@ -13,8 +13,8 @@ export default function ViewerDashboard() {
   const [teams, setTeams] = useState([]);
   const [venueStats, setVenueStats] = useState({});
   const [breakModes, setBreakModes] = useState({});
-  const [selectedLocationId, setSelectedLocationId] = useState(null);
-  const [drawerVenueId, setDrawerVenueId] = useState(null);
+  const [selectedLocationId, setSelectedLocationId] = useState('main_arena');
+  const [drawerVenueId, setDrawerVenueId] = useState('main_arena');
   const [showStatsDrawer, setShowStatsDrawer] = useState(false);
   const [poolAnimation, setPoolAnimation] = useState(null);
   const [activityFeed, setActivityFeed] = useState([]);
@@ -46,28 +46,7 @@ export default function ViewerDashboard() {
     }
   }, [auctionStartingCountdown]);
 
-  // Interval ticker for real-time second updates derived from server deadline
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTimers(prev => {
-        let changed = false;
-        const next = { ...prev };
-        Object.keys(next).forEach(locId => {
-          const t = next[locId];
-          if (t && t.deadlineMs && !t.paused) {
-            const sec = Math.max(0, Math.ceil((t.deadlineMs - Date.now()) / 1000));
-            if (sec !== t.remainingSec) {
-              next[locId] = { ...t, remainingSec: sec };
-              changed = true;
-            }
-          }
-        });
-        return changed ? next : prev;
-      });
-    }, 250);
 
-    return () => clearInterval(interval);
-  }, []);
 
   const addActivity = (activity) => {
     setActivityFeed(prev => {
@@ -102,7 +81,21 @@ export default function ViewerDashboard() {
 
       const audio = new Audio('/transition.mp3');
       audio.volume = 0.8;
-      audio.play().catch(e => console.log('Audio autoplay blocked', e));
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => {
+          console.log('Audio autoplay blocked', e);
+          const unlockAudio = () => {
+            const retryAudio = new Audio('/transition.mp3');
+            retryAudio.volume = 0.8;
+            retryAudio.play().catch(() => {});
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('keydown', unlockAudio);
+          };
+          document.addEventListener('click', unlockAudio, { once: true });
+          document.addEventListener('keydown', unlockAudio, { once: true });
+        });
+      }
     } catch (e) {
       console.log('Audio play error', e);
     }
@@ -118,8 +111,11 @@ export default function ViewerDashboard() {
       .then(res => res.json())
       .then(fetchedLocs => {
         setLocations(fetchedLocs);
-        if (fetchedLocs.length > 0 && !drawerVenueId) {
-          setDrawerVenueId(fetchedLocs[0].id);
+        if (fetchedLocs.length > 0) {
+          if (!drawerVenueId) {
+            setDrawerVenueId(fetchedLocs[0].id);
+          }
+          setSelectedLocationId(prev => prev || fetchedLocs[0].id);
         }
 
         fetchedLocs.forEach(loc => {
@@ -161,8 +157,47 @@ export default function ViewerDashboard() {
 
     socket.on('livePlayerUpdated', (player) => {
       const locId = player?.locationId || selectedLocationId || 'main_arena';
-      setLivePlayers(prev => ({ ...prev, [locId]: player || null }));
-      if (player?.timerDeadlineMs) {
+
+      if (!player || player.isCleared || player.status === 'UPCOMING' || !player.id) {
+        setLivePlayers(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        setCurrentBids(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        setTimers(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+        return;
+      }
+
+      setLivePlayers(prev => ({ ...prev, [locId]: player }));
+      if (player.currentBid) {
+        setCurrentBids(prev => ({
+          ...prev,
+          [locId]: {
+            playerId: player.id,
+            amount: player.currentBid,
+            teamId: player.currentBidTeamId,
+            teamName: player.currentBidTeamName,
+            locationId: locId
+          }
+        }));
+      } else {
+        setCurrentBids(prev => {
+          const next = { ...prev };
+          delete next[locId];
+          return next;
+        });
+      }
+
+      if (player.timerDeadlineMs) {
         setTimers(prev => ({
           ...prev,
           [locId]: {
@@ -172,6 +207,25 @@ export default function ViewerDashboard() {
           }
         }));
       }
+    });
+
+    socket.on('livePlayerCleared', (data) => {
+      const locId = data?.locationId || selectedLocationId || 'main_arena';
+      setLivePlayers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setCurrentBids(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
+      setTimers(prev => {
+        const next = { ...prev };
+        delete next[locId];
+        return next;
+      });
     });
 
     socket.on('timerUpdated', (data) => {
@@ -284,6 +338,7 @@ export default function ViewerDashboard() {
 
     return () => {
       socket.off('livePlayerUpdated');
+      socket.off('livePlayerCleared');
       socket.off('timerUpdated');
       socket.off('newBid');
       socket.off('playerSold');
@@ -295,19 +350,20 @@ export default function ViewerDashboard() {
   }, []);
 
   useEffect(() => {
-    if (selectedLocationId && livePlayers[selectedLocationId]) {
-      const currentPlayer = livePlayers[selectedLocationId];
+    const locId = selectedLocationId || locations[0]?.id || 'main_arena';
+    if (locId && livePlayers[locId]) {
+      const currentPlayer = livePlayers[locId];
       if (currentPlayer.status === 'LIVE' && currentPlayer.pool) {
-        const currentPool = currentPoolsRef.current[selectedLocationId];
+        const currentPool = currentPoolsRef.current[locId];
         if (currentPool !== currentPlayer.pool) {
           playTransitionSound();
           setPoolAnimation(currentPlayer.pool);
           setTimeout(() => setPoolAnimation(null), 3500);
-          currentPoolsRef.current[selectedLocationId] = currentPlayer.pool;
+          currentPoolsRef.current[locId] = currentPlayer.pool;
         }
       }
     }
-  }, [livePlayers, selectedLocationId]);
+  }, [livePlayers, selectedLocationId, locations]);
 
   const getTeamName = (teamId) => {
     const team = teams.find(t => String(t.id) === String(teamId));
@@ -342,7 +398,7 @@ export default function ViewerDashboard() {
   // No home logo, professional back arrow (Requirement 3)
   const renderHeaderActions = (showBack = true) => (
     <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-      {showBack && (
+      {showBack && locations.length > 1 && (
         <button
           onClick={() => setSelectedLocationId(null)}
           style={{
@@ -815,59 +871,90 @@ export default function ViewerDashboard() {
                   </span>
                 </div>
 
-                {/* Venue Badge */}
-                {loc && loc.name && (
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '30px',
-                    padding: '0.4rem 0.95rem'
-                  }}>
-                    <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>📍</span>
-                    <span style={{
-                      color: '#cbd5e1',
-                      fontSize: '0.78rem',
-                      fontWeight: '700',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase',
-                      fontFamily: 'JetBrains Mono, monospace'
-                    }}>
-                      {loc.name}
-                    </span>
+                {/* Venue Badge & Switcher */}
+                {locations.length > 1 ? (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#cbd5e1', fontFamily: 'JetBrains Mono, monospace' }}>VENUE:</span>
+                    <select
+                      value={selectedLocationId || locations[0]?.id}
+                      onChange={(e) => setSelectedLocationId(e.target.value)}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid rgba(255, 215, 0, 0.35)',
+                        color: '#ffd700',
+                        borderRadius: '20px',
+                        padding: '0.3rem 0.85rem',
+                        fontSize: '0.75rem',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {locations.map(l => (
+                        <option key={l.id} value={l.id} style={{ background: '#0a0d14', color: '#fff' }}>
+                          📍 {l.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                ) : (
+                  loc && loc.name && (
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '30px',
+                      padding: '0.4rem 0.95rem'
+                    }}>
+                      <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>📍</span>
+                      <span style={{
+                        color: '#cbd5e1',
+                        fontSize: '0.78rem',
+                        fontWeight: '700',
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        fontFamily: 'JetBrains Mono, monospace'
+                      }}>
+                        {loc.name}
+                      </span>
+                    </div>
+                  )
                 )}
 
-                {/* Deadline Timer Badge */}
-                {timers[loc.id] && (
-                  <div style={{
-                    padding: '0.35rem 0.95rem',
-                    background: timers[loc.id].paused 
-                      ? 'var(--amber-surface, rgba(245, 158, 11, 0.15))' 
-                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-surface, rgba(239, 68, 68, 0.2))' : 'rgba(212, 175, 55, 0.12)'),
-                    border: `1px solid ${timers[loc.id].paused 
-                      ? 'var(--amber-border, rgba(245, 158, 11, 0.4))' 
-                      : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-border, rgba(239, 68, 68, 0.5))' : 'var(--gold-border, rgba(212, 175, 55, 0.4))')}`,
-                    borderRadius: '30px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
+                {/* Manual Gavel Bidding Status Badge */}
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  background: timers[loc.id]?.paused 
+                    ? 'rgba(245, 158, 11, 0.12)' 
+                    : 'rgba(0, 230, 160, 0.12)',
+                  border: `1px solid ${timers[loc.id]?.paused 
+                    ? 'rgba(245, 158, 11, 0.4)' 
+                    : 'rgba(0, 230, 160, 0.4)'}`,
+                  borderRadius: '30px',
+                  padding: '0.35rem 0.95rem'
+                }}>
+                  <span style={{
+                    width: '7px',
+                    height: '7px',
+                    borderRadius: '50%',
+                    backgroundColor: timers[loc.id]?.paused ? '#f59e0b' : '#00e6a0',
+                    boxShadow: timers[loc.id]?.paused ? '0 0 8px #f59e0b' : '0 0 8px #00e6a0',
+                    display: 'inline-block'
+                  }} />
+                  <span style={{
+                    color: timers[loc.id]?.paused ? '#f59e0b' : '#00e6a0',
+                    fontSize: '0.76rem',
+                    fontWeight: '800',
+                    letterSpacing: '0.08em',
                     fontFamily: 'JetBrains Mono, monospace'
                   }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', fontWeight: '700' }}>TIME:</span>
-                    <span style={{
-                      fontSize: '0.95rem',
-                      fontWeight: '900',
-                      color: timers[loc.id].paused 
-                        ? 'var(--amber-warning, #f59e0b)' 
-                        : (timers[loc.id].remainingSec <= 5 ? 'var(--crimson-danger, #ef4444)' : 'var(--gold-bright, #f0cc5d)')
-                    }}>
-                      {timers[loc.id].paused ? 'PAUSED' : `${timers[loc.id].remainingSec}s`}
-                    </span>
-                  </div>
-                )}
+                    {timers[loc.id]?.paused ? 'BIDDING PAUSED' : 'BIDDING OPEN'}
+                  </span>
+                </div>
               </div>
 
               {renderHeaderActions(true)}
@@ -1277,7 +1364,8 @@ export default function ViewerDashboard() {
     );
   };
 
-  const isCinematic = selectedLocationId && livePlayers[selectedLocationId] && ['LIVE', 'SOLD', 'UNSOLD'].includes(livePlayers[selectedLocationId].status);
+  const activeLocId = selectedLocationId || locations[0]?.id || 'main_arena';
+  const isCinematic = Boolean(activeLocId && livePlayers[activeLocId] && ['LIVE', 'SOLD', 'UNSOLD'].includes(livePlayers[activeLocId].status));
 
   // Determine which venue's stats to show in the drawer (Requirement 2 & 4)
   const activeStatsLocId = drawerVenueId || selectedLocationId || locations[0]?.id;
@@ -1305,7 +1393,7 @@ export default function ViewerDashboard() {
           height: 'calc(100vh - 2.5rem)'
         }}>
           {renderSidebar()}
-          {selectedLocationId ? renderDetailedView() : renderGlobalView()}
+          {(selectedLocationId || locations.length === 1) ? renderDetailedView() : renderGlobalView()}
         </div>
       )}
 
@@ -1537,7 +1625,7 @@ export default function ViewerDashboard() {
       </div>
 
       {/* Pool Transition Notification */}
-      {poolAnimation && isCinematic && (
+      {poolAnimation && (
         <div style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,

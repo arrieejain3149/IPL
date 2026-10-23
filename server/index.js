@@ -59,6 +59,13 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // Ensure seamless routing whether invoked directly as Cloud Function (/login) or via proxy (/api/login)
 app.use((req, res, next) => {
   if (!req.url.startsWith('/api') && req.url !== '/' && !req.url.startsWith('/?')) {
@@ -75,7 +82,7 @@ const sseClients = new Map();
 // High-Speed Server In-Memory Cache (0ms latency responses)
 const memoryCache = new Map();
 
-function getCached(key, ttlMs = 15000) {
+function getCached(key, ttlMs = 1000) {
   const item = memoryCache.get(key);
   if (!item) return null;
   if (Date.now() - item.timestamp > ttlMs) {
@@ -227,7 +234,7 @@ app.post('/api/login', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/teams', async (req, res) => {
   try {
-    const cached = getCached('teams_all', 10000);
+    const cached = getCached('teams_all', 1000);
     if (cached) return res.json(cached);
 
     const [teamsSnap, playersSnap] = await Promise.all([
@@ -299,7 +306,7 @@ app.put('/api/teams/:id/disqualify', async (req, res) => {
 // -----------------------------------------------------------------------------
 app.get('/api/locations', async (req, res) => {
   try {
-    const cached = getCached('locations_all', 10000);
+    const cached = getCached('locations_all', 1000);
     if (cached) return res.json(cached);
 
     const [locationsSnap, teamsSnap, usersSnap, playersSnap] = await Promise.all([
@@ -347,7 +354,7 @@ app.get('/api/locations', async (req, res) => {
       usersByLoc.set(data.locationId, list);
     });
 
-    const locations = locationsSnap.docs.map((doc) => ({
+    const locations = locationsSnap.docs.filter((doc) => doc.id === 'main_arena').map((doc) => ({
       id: doc.id,
       ...doc.data(),
       teams: teamsByLoc.get(doc.id) || [],
@@ -869,8 +876,8 @@ app.post('/api/auction/set-live', async (req, res) => {
     batch.update(playerRef, {
       status: 'LIVE',
       locationId: String(locationId),
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration,
+      timerDeadlineMs: null,
+      timerDurationSeconds: null,
       currentBid: null,
       currentBidTeamId: null,
       currentBidId: null,
@@ -880,10 +887,10 @@ app.post('/api/auction/set-live', async (req, res) => {
     batch.update(locationRef, {
       activePlayerId: targetPlayerId,
       auctionStatus: 'LIVE',
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration,
+      timerDeadlineMs: null,
+      timerDurationSeconds: null,
       timerPaused: false,
-      timerRemainingMs: duration * 1000,
+      timerRemainingMs: null,
       updatedAt: now,
     });
 
@@ -894,17 +901,17 @@ app.post('/api/auction/set-live', async (req, res) => {
       id: updated.id, 
       ...updated.data(), 
       locationId: String(locationId),
-      timerDeadlineMs: deadlineMs,
-      timerDurationSeconds: duration 
+      timerDeadlineMs: null,
+      timerDurationSeconds: null
     };
     await logAuditEvent('ADVANCE_PLAYER', { playerId: targetPlayerId, durationSeconds: duration }, locationId);
     broadcastEvent(locationId, 'livePlayerUpdated', livePlayerData);
     broadcastEvent(locationId, 'timerUpdated', { 
       locationId, 
-      deadlineMs, 
-      durationSeconds: duration, 
+      deadlineMs: null,
+      durationSeconds: null, 
       paused: false,
-      remainingMs: duration * 1000 
+      remainingMs: null 
     });
 
     res.json(livePlayerData);
@@ -1098,7 +1105,17 @@ app.post('/api/auction/reset', async (req, res) => {
 
     await batch.commit();
 
+    invalidateCache();
     broadcastEvent(locId, 'auctionReset', { locationId: locId });
+    broadcastEvent(locId, 'livePlayerCleared', { locationId: locId });
+    broadcastEvent(locId, 'livePlayerUpdated', null);
+    broadcastEvent(locId, 'timerUpdated', {
+      locationId: locId,
+      deadlineMs: null,
+      paused: false,
+      remainingMs: null,
+      durationSeconds: 30
+    });
     await logAuditEvent('AUCTION_RESET', { locationId: locId }, locId);
     res.json({ success: true, message: 'Auction reset successfully for location: ' + locId });
   } catch (err) {
@@ -1139,9 +1156,7 @@ app.post('/api/bids', async (req, res) => {
       if (locationData.timerPaused) {
         throw new Error('Auction bidding is currently paused by the auctioneer');
       }
-      if (locationData.timerDeadlineMs && nowMs > locationData.timerDeadlineMs) {
-        throw new Error('Bidding deadline has expired. Bid rejected.');
-      }
+      // Timer deadline removed: bidding closed manually by auctioneer
 
       // 2. Player Status Validation
       if (playerData.status !== 'LIVE') {

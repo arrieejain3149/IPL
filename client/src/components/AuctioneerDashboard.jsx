@@ -78,6 +78,17 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
   const [playerHistory, setPlayerHistory] = useState([]);
   const [auctionStartingCountdown, setAuctionStartingCountdown] = useState(null);
   const isResolvingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      setAuctionStartingCountdown(null);
+      setAutoAdvanceCountdown(null);
+      isResolvingRef.current = false;
+    };
+  }, []);
 
   // Synchronized 5-Second Global Countdown effect
   useEffect(() => {
@@ -104,88 +115,28 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     });
   };
 
-  // Local ticker derived from server deadline with automated resolution at zero
-  useEffect(() => {
-    if (!timerDeadline || timerPaused) return;
-
-    const interval = setInterval(() => {
-      const remainingMs = timerDeadline - Date.now();
-      const sec = Math.max(0, Math.ceil(remainingMs / 1000));
-      setTimerSecondsLeft(sec);
-      if (remainingMs <= 0) {
-        clearInterval(interval);
-        // Only automatically resolve current lot if AUTO-PILOT is explicitly ON!
-        if (autoPilotEnabled && !isResolvingRef.current && livePlayer && livePlayer.status === 'LIVE') {
-          isResolvingRef.current = true;
-          autoResolveLot();
-        }
-      }
-    }, 200);
-
-    return () => clearInterval(interval);
-  }, [timerDeadline, timerPaused, livePlayer, biddingTeam, currentBid, autoPilotEnabled, selectedLocation]);
-
-  const controlTimer = async (action, extra = {}) => {
+  const togglePauseBidding = async () => {
     if (!selectedLocation) return;
-
-    // Immediate optimistic local state update so the pause/resume happens with 0 latency
-    if (action === 'pause') {
-      setTimerPaused(true);
-      const remainingSec = timerSecondsLeft !== null ? timerSecondsLeft : 30;
-      setTimerSecondsLeft(remainingSec);
-      setTimerDeadline(null);
-      socket.emitLocal('timerUpdated', {
-        locationId: selectedLocation,
-        deadlineMs: null,
-        paused: true,
-        remainingMs: remainingSec * 1000
-      });
-    } else if (action === 'resume') {
-      setTimerPaused(false);
-      const remainingSec = timerSecondsLeft !== null ? timerSecondsLeft : 30;
-      const newDeadline = Date.now() + remainingSec * 1000;
-      setTimerDeadline(newDeadline);
-      setTimerSecondsLeft(remainingSec);
-      socket.emitLocal('timerUpdated', {
-        locationId: selectedLocation,
-        deadlineMs: newDeadline,
-        paused: false,
-        remainingMs: remainingSec * 1000
-      });
-    } else if (action === 'extend') {
-      const extraSec = extra.addSeconds || 10;
-      const remainingSec = (timerSecondsLeft !== null ? timerSecondsLeft : 0) + extraSec;
-      setTimerSecondsLeft(remainingSec);
-      if (!timerPaused) {
-        const currentEnd = timerDeadline ? Math.max(Date.now(), timerDeadline) : Date.now();
-        const newDeadline = currentEnd + extraSec * 1000;
-        setTimerDeadline(newDeadline);
-        socket.emitLocal('timerUpdated', {
-          locationId: selectedLocation,
-          deadlineMs: newDeadline,
-          paused: false,
-          remainingMs: remainingSec * 1000
-        });
-      }
-    }
-
+    const newPaused = !timerPaused;
+    setTimerPaused(newPaused);
+    socket.emitLocal('timerUpdated', {
+      locationId: selectedLocation,
+      deadlineMs: null,
+      paused: newPaused,
+      remainingMs: null,
+      durationSeconds: null
+    });
     try {
-      const res = await fetch(`${API_URL}/api/auction/timer`, {
+      await fetch(`${API_URL}/api/auction/timer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           locationId: selectedLocation,
-          action,
-          durationSeconds: extra.durationSeconds || timerConfigDuration,
-          addSeconds: extra.addSeconds || 10
+          action: newPaused ? 'pause' : 'resume'
         })
       });
-      const data = await res.json();
-      if (data && data.locationId) {
-        socket.emitLocal('timerUpdated', data);
-      }
     } catch (err) {
-      console.error('Failed to control timer:', err);
+      console.error('Failed to toggle pause bidding:', err);
     }
   };
 
@@ -455,8 +406,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       });
 
       // Restart authoritative countdown for the reopened previous player
-      await controlTimer('start', { durationSeconds: timerConfigDuration });
-
+      
       const data = await res.json();
       const loadedPlayer = (data && data.id) ? data : prevPlayer;
 
@@ -897,97 +847,47 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
 
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           
-          {/* Authoritative Server Countdown Bar */}
+          {/* Manual Gavel Bidding Status */}
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
-            gap: '0.5rem', 
-            padding: '0.35rem 0.75rem', 
-            background: 'rgba(255, 255, 255, 0.04)', 
-            border: '1px solid rgba(255, 255, 255, 0.1)', 
-            borderRadius: '4px' 
+            gap: '0.6rem', 
+            padding: '0.4rem 0.95rem', 
+            background: timerPaused ? 'var(--amber-surface)' : 'rgba(0, 230, 160, 0.08)', 
+            border: timerPaused ? '1px solid var(--amber-border)' : '1px solid rgba(0, 230, 160, 0.4)', 
+            borderRadius: '6px' 
           }}>
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>TIMER:</span>
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: timerPaused ? '#f59e0b' : '#00e6a0',
+              boxShadow: timerPaused ? '0 0 10px #f59e0b' : '0 0 10px #00e6a0',
+              display: 'inline-block'
+            }} />
             <span style={{ 
-              fontSize: '1.05rem', 
-              fontWeight: '900', 
+              fontSize: '0.8rem', 
+              fontWeight: '800', 
               fontFamily: 'JetBrains Mono, monospace',
-              color: timerPaused 
-                ? 'var(--amber-warning)' 
-                : ((timerSecondsLeft !== null && timerSecondsLeft <= 5) ? 'var(--crimson-danger)' : 'var(--gold-bright)')
+              color: timerPaused ? 'var(--amber-warning)' : '#00e6a0',
+              letterSpacing: '0.08em'
             }}>
-              {timerSecondsLeft !== null ? `${timerSecondsLeft}s` : '--'}
+              {timerPaused ? 'BIDDING PAUSED' : 'BIDDING OPEN • MANUAL CLOSE'}
             </span>
-            {timerPaused && (
-              <span className="badge" style={{ background: 'var(--amber-surface)', color: 'var(--amber-warning)', fontSize: '0.65rem' }}>
-                PAUSED
-              </span>
-            )}
           </div>
 
-          {/* Timer Preset Selector */}
-          <select 
-            value={timerConfigDuration}
-            onChange={(e) => {
-              const dur = Number(e.target.value);
-              setTimerConfigDuration(dur);
-              controlTimer('set_duration', { durationSeconds: dur });
-            }}
-            className="form-input"
-            style={{ width: 'auto', padding: '0.4rem 0.6rem', fontSize: '0.75rem', fontFamily: 'JetBrains Mono, monospace' }}
-          >
-            <option value={15}>15 SEC PRESET</option>
-            <option value={30}>30 SEC PRESET</option>
-            <option value={45}>45 SEC PRESET</option>
-            <option value={60}>60 SEC PRESET</option>
-          </select>
-
-          {/* Timer Action Buttons */}
+          {/* Pause / Resume Bidding Toggle */}
           <button
             className={`btn ${timerPaused ? 'btn-amber' : 'btn-secondary'}`}
-            onClick={() => controlTimer(timerPaused ? 'resume' : 'pause')}
+            onClick={togglePauseBidding}
             style={{ 
-              padding: '0.45rem 0.85rem', 
-              fontSize: '0.75rem',
+              padding: '0.45rem 0.95rem', 
+              fontSize: '0.78rem',
               fontWeight: '700',
               border: timerPaused ? '1px solid var(--amber-border)' : '1px solid rgba(255, 255, 255, 0.12)'
             }}
           >
-            {timerPaused ? '▶ RESUME TIMER' : '⏸ PAUSE TIMER'}
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={() => controlTimer('extend', { addSeconds: 10 })}
-            style={{ padding: '0.45rem 0.8rem', fontSize: '0.75rem', color: 'var(--gold-bright)' }}
-          >
-            +10s EXTEND
-          </button>
-
-          <button
-            className={`btn ${autoPilotEnabled ? 'btn-gold' : 'btn-secondary'}`}
-            onClick={() => {
-              setAutoPilotEnabled(prev => {
-                const nextVal = !prev;
-                try {
-                  localStorage.setItem('ipl_auctioneer_autopilot', String(nextVal));
-                } catch (e) {}
-                if (!nextVal) {
-                  setAutoAdvanceCountdown(null);
-                  isResolvingRef.current = false;
-                }
-                return nextVal;
-              });
-            }}
-            style={{ 
-              padding: '0.55rem 1rem', 
-              fontSize: '0.8rem', 
-              fontWeight: '800',
-              boxShadow: autoPilotEnabled ? '0 0 12px rgba(212, 175, 55, 0.4)' : 'none'
-            }}
-            title="When active: automatically resolves sold/unsold when timer hits 0 and advances to next player in slot"
-          >
-            {autoPilotEnabled ? 'AUTO-PILOT: ON' : 'AUTO-PILOT: OFF'}
+            {timerPaused ? '▶ RESUME BIDDING' : '⏸ PAUSE BIDDING'}
           </button>
 
           <button

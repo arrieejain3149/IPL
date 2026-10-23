@@ -47,7 +47,7 @@ class FirestoreAuctionRealtimeBridge {
     }
     this.listeners.get(event).add(callback);
     if (event === 'livePlayerUpdated') {
-      if (this.currentLivePlayer && this.currentLivePlayer.status === 'LIVE' && !this.currentLivePlayer.isCleared && this.currentLivePlayer.id) {
+      if (this.currentLivePlayer && !this.currentLivePlayer.isCleared && this.currentLivePlayer.id) {
         try {
           callback(this.currentLivePlayer);
         } catch (err) {}
@@ -482,24 +482,76 @@ class FirestoreAuctionRealtimeBridge {
       }
     } catch (err) {}
 
-    // 5. Throttled Smart Poller (runs ONLY if Firestore is offline, at a gentle 8s interval)
+    // 5. High-Frequency Real-Time Sync Poller (800ms interval guarantees instant synchronization across all panels)
+    let lastPolledBidAmount = null;
+    let lastPolledPlayerId = null;
+    let lastPolledStatus = null;
     const poller = setInterval(async () => {
-      if (this.isFirestoreHealthy) return; // Do not poll when live Firestore is healthy!
       try {
-        const res = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
-        if (!res.ok) return;
-        const all = await res.json();
-        const active = all.find((p) => p.status === 'LIVE');
-        if (active && active.id !== this.currentActivePlayerId) {
-          this.currentActivePlayerId = active.id;
-          this.currentLivePlayer = { locationId: locIdStr, ...active };
-          this.emitLocal('livePlayerUpdated', this.currentLivePlayer);
-        } else if (!active && this.currentActivePlayerId) {
-          this.currentActivePlayerId = null;
-          this.currentLivePlayer = null;
+        const locRes = await fetch(`${API_BASE}/api/locations`);
+        if (!locRes.ok) return;
+        const locs = await locRes.json();
+        const currentLoc = Array.isArray(locs) ? locs.find(l => String(l.id) === locIdStr) : null;
+        
+        if (currentLoc) {
+          if (!currentLoc.activePlayerId && this.currentActivePlayerId) {
+            this.currentActivePlayerId = null;
+            this.currentLivePlayer = null;
+            lastPolledPlayerId = null;
+            lastPolledBidAmount = null;
+            lastPolledStatus = null;
+            this.activePlayerByLocation.delete(locIdStr);
+            this.emitLocal('livePlayerCleared', { locationId: locIdStr });
+            this.emitLocal('livePlayerUpdated', null);
+          } else if (currentLoc.activePlayerId) {
+            const pRes = await fetch(`${API_BASE}/api/players?locationId=${locIdStr}`);
+            if (pRes.ok) {
+              const all = await pRes.json();
+              const active = all.find(p => p.id === currentLoc.activePlayerId);
+              if (active) {
+                const activePlayerObj = {
+                  locationId: locIdStr,
+                  ...active,
+                  timerDeadlineMs: null,
+                  timerDurationSeconds: null,
+                  timerPaused: Boolean(currentLoc.timerPaused)
+                };
+
+                if (active.status === 'LIVE') {
+                  if (active.id !== this.currentActivePlayerId || !this.currentLivePlayer || lastPolledStatus !== 'LIVE') {
+                    this.currentActivePlayerId = active.id;
+                    this.currentLivePlayer = activePlayerObj;
+                    lastPolledPlayerId = active.id;
+                    lastPolledBidAmount = active.currentBid;
+                    lastPolledStatus = 'LIVE';
+                    this.activePlayerByLocation.set(locIdStr, active.id);
+                    this.emitLocal('livePlayerUpdated', activePlayerObj);
+                  } else if (active.currentBid && active.currentBid !== lastPolledBidAmount) {
+                    lastPolledBidAmount = active.currentBid;
+                    this.emitLocal('newBid', {
+                      playerId: active.id,
+                      teamId: active.currentBidTeamId,
+                      amount: active.currentBid,
+                      locationId: locIdStr
+                    });
+                  }
+                } else if (active.status === 'SOLD' && lastPolledStatus !== 'SOLD') {
+                  lastPolledStatus = 'SOLD';
+                  this.currentLivePlayer = activePlayerObj;
+                  this.emitLocal('playerSold', activePlayerObj);
+                  this.emitLocal('livePlayerUpdated', activePlayerObj);
+                } else if (active.status === 'UNSOLD' && lastPolledStatus !== 'UNSOLD') {
+                  lastPolledStatus = 'UNSOLD';
+                  this.currentLivePlayer = activePlayerObj;
+                  this.emitLocal('playerUnsold', activePlayerObj);
+                  this.emitLocal('livePlayerUpdated', activePlayerObj);
+                }
+              }
+            }
+          }
         }
       } catch (e) {}
-    }, 8000);
+    }, 800);
     locationUnsubs.push(() => clearInterval(poller));
 
     this.locationUnsubscribers.set(locIdStr, locationUnsubs);
