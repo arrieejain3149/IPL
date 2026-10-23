@@ -1703,8 +1703,8 @@ export default function ViewerDashboard() {
             textAlign: 'center'
           }}>
             {auctionStartingCountdown > 0 
-              ? 'Stand by for the opening lot of the IPL Mega Auction' 
-              : 'Gavel stage live — Bidding paddles unlocked!'}
+              ? 'Stand by for the commencement of the IPL Mega Auction' 
+              : 'Gavel stage live — Awaiting opening lot!'}
           </p>
 
           {auctionStartingCountdown > 0 ? (

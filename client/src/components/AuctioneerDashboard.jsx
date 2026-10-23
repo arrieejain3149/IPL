@@ -101,8 +101,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     } else if (auctionStartingCountdown === 0) {
       const timer = setTimeout(() => {
         setAuctionStartingCountdown(null);
-        // Commence auction with the first player lot
-        advanceNextPlayer();
+        // Do NOT auto load: auctioneer loads players manually
       }, 700);
       return () => clearTimeout(timer);
     }
@@ -233,9 +232,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       });
     }
 
-    if (autoPilotEnabled) {
-      setAutoAdvanceCountdown(3);
-    }
+    // Auto-advance disabled: lot progression is manual
   };
 
   // Automated progression countdown to the next lot in the current category/slot
@@ -612,9 +609,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
     });
     setLivePlayer({ ...livePlayer, status: 'SOLD', soldPrice: amount });
     setPlayers(prev => prev.filter(p => p.id !== livePlayer.id));
-    if (autoPilotEnabled) {
-      setAutoAdvanceCountdown(3);
-    }
+    // Auto-advance disabled: lot progression is manual
   };
 
   const markUnsold = () => {
@@ -628,9 +623,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
       const without = prev.filter(p => p.id !== livePlayer.id);
       return [...without, unsoldPlayer].sort(sortPlayersByPool);
     });
-    if (autoPilotEnabled) {
-      setAutoAdvanceCountdown(3);
-    }
+    // Auto-advance disabled: lot progression is manual
   };
 
   const issuePenalty = (teamId) => {
@@ -1565,7 +1558,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                   </h2>
 
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '500px', textAlign: 'center', margin: 0, lineHeight: '1.5' }}>
-                    Click <strong style={{ color: 'var(--gold-bright)' }}>START THE AUCTION</strong> to broadcast a synchronized 5-second countdown to the Team Leader war rooms and spectators before the first lot enters the stage.
+                    Click <strong style={{ color: 'var(--gold-bright)' }}>START THE AUCTION</strong> to broadcast a synchronized 5-second countdown to the Team Leader war rooms and spectators. All lot loading is 100% manual.
                   </p>
 
                   <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', marginTop: '0.5rem' }}>
@@ -1588,7 +1581,7 @@ export default function AuctioneerDashboard({ locationIdOverride }) {
                         gap: '0.5rem'
                       }}
                     >
-                      {auctionStartingCountdown !== null ? `STARTING IN ${auctionStartingCountdown}s...` : 'START THE AUCTION (5s COUNTDOWN)'}
+                      {auctionStartingCountdown !== null ? `STARTING IN ${auctionStartingCountdown}s...` : 'BROADCAST AUCTION START (5s)'}
                     </button>
 
                     <button 
